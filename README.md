@@ -53,9 +53,10 @@ curl https://api.getconnie.com/v1/sign_pages/$SIGN_PAGE_ID/embed_sessions \
 { "url": "https://sign.page/embed/…", "expires_at": "2026-10-06T15:00:00Z" }
 ```
 
-- `origin` is the `scheme://host[:port]` of the page that opens the modal.
-  The SignPage can only be framed there. It must be `https`, except
-  `http://localhost` and `http://127.0.0.1` for development.
+- `origin` is the `scheme://host[:port]` of the page that opens the modal,
+  with no path. The SignPage can only be framed there. It must be `https`,
+  except on a loopback host during development: `localhost`, any
+  `*.localhost`, `127.0.0.1` or `[::1]`.
 - `return_url` is where an eID signer lands afterwards. It must be on `origin`,
   and it is required when the SignPage offers an eID.
 - `metadata` is up to 20 string keys with string values of up to 500
@@ -79,28 +80,47 @@ npm install @getconnie/connie-js
 ```js
 import { loadConnie } from "@getconnie/connie-js";
 
-const connie = await loadConnie();
+document.querySelector("#sign").addEventListener("click", async () => {
+  const connie = await loadConnie();
+  if (!connie) return;
 
-connie.openSignPage({
-  fetchUrl: async () => {
-    const response = await fetch("/api/connie-session", { method: "POST" });
-    const { url } = await response.json();
-    return url;
-  },
-  onSigned: () => showThankYou(),
+  connie.openSignPage({
+    fetchUrl: () =>
+      fetch("/your-endpoint", { method: "POST" })
+        .then((response) => response.json())
+        .then((session) => session.url),
+    onSigned() {
+      // Update your UI. The contract.signed webhook is the record.
+    },
+  });
 });
 ```
+
+`fetchUrl` is a function that asks your backend for a new session and returns a
+Promise of its `url`, so every opening gets a fresh session.
 
 Or with a script tag:
 
 ```html
 <script src="https://assets.getconnie.com/js/v1.js"></script>
+<button id="sign">Sign the agreement</button>
 <script>
   document.querySelector("#sign").addEventListener("click", () => {
-    Connie.openSignPage({ url: sessionUrlFromYourBackend });
+    Connie.openSignPage({
+      fetchUrl: () =>
+        fetch("/your-endpoint", { method: "POST" })
+          .then((response) => response.json())
+          .then((session) => session.url),
+      onSigned() {
+        // Update your UI. The contract.signed webhook is the record.
+      },
+    });
   });
 </script>
 ```
+
+Under a Content Security Policy, the inline `<script>` needs your nonce, or put
+the call in a JavaScript file of your own.
 
 The package is a thin loader: `loadConnie()` adds the hosted script to the page
 once and resolves with `window.Connie`. It reuses a script tag that is already
@@ -159,7 +179,7 @@ connie.version: string
 
 interface OpenSignPageOptions {
   url?: string;                        // a session url your backend minted, or
-  fetchUrl?: () => Promise<string>;    // a function that mints one
+  fetchUrl?: () => Promise<string>;    // a function that asks your backend for one
   onReady?: () => void;
   onSigned?: () => void;
   onClose?: () => void;
@@ -177,8 +197,10 @@ interface ConnieEmbedError {
 ```
 
 Pass exactly one of `url` and `fetchUrl`. `openSignPage` throws a `TypeError`
-straight away when you pass neither or both, or a `url` that is not `https`.
-Everything that goes wrong later is reported through `onError`.
+straight away when you pass neither or both, or a `url` that is not `https`
+(`http` is accepted on `localhost`, any `*.localhost`, `127.0.0.1` and `[::1]`
+for development). Everything that goes wrong later is reported through
+`onError`.
 
 All types are exported from the package: `ConnieJs`, `SignPageEmbed`,
 `OpenSignPageOptions`, `ConnieEmbedError` and `ConnieEmbedErrorCode`.
@@ -206,7 +228,7 @@ Error codes:
 | `expired`      | The session is unknown, expired or already used. Mint a new one.   |
 | `unavailable`  | The SignPage is no longer published or active.                     |
 | `no_credits`   | The account has no signing credits left.                           |
-| `invalid_url`  | `fetchUrl` resolved with something that is not an `https` URL.     |
+| `invalid_url`  | `fetchUrl` resolved with something that is not an allowed URL.     |
 | `fetch_failed` | `fetchUrl` rejected or threw. `message` carries its error message. |
 
 The hosted script is updated in place, so new codes may appear. Treat a code you
@@ -225,7 +247,10 @@ state, and your server flips it to "done" when the webhook lands.
 
 ## Content Security Policy
 
-connie-js is built to run under a strict CSP. Add:
+connie-js is built to run under a strict CSP. Add each source below to the
+directive of the same name in your policy. If your policy has no such directive
+yet, start it from what your `default-src` allows, so nothing that loads today
+stops loading.
 
 ```
 script-src https://assets.getconnie.com;
@@ -236,10 +261,10 @@ If your account signs on a custom domain, use that domain in `frame-src` instead
 of `sign.page`. The Embed tab of each SignPage in Connie shows the exact lines
 for your account.
 
-- **No `style-src` change.** connie-js styles itself only through CSSOM (a
-  constructed stylesheet and `element.style`). It never adds a `<style>`
-  element or a `style` attribute, so neither `'unsafe-inline'` nor a hash is
-  needed.
+- **No `style-src` change.** connie-js needs nothing from your `style-src`:
+  it sets its styles through the CSSOM (a constructed stylesheet and
+  `element.style`), which CSP does not restrict, so neither `'unsafe-inline'`
+  nor a hash is needed.
 - **No `connect-src` or `img-src` change.** Everything the SignPage loads is
   governed by Connie's CSP, not yours.
 - **Nonces and `'strict-dynamic'`.** If your policy uses `'strict-dynamic'`,
@@ -293,10 +318,9 @@ cookies. The hosted script is under 10 kB gzipped, the npm loader under 1 kB.
 
 ## Documentation
 
-<!-- TODO: replace with the "Embedding a SignPage" page once it is published. -->
-
-The full guide, including the API reference for embed sessions, lives at
-[docs.getconnie.com](https://docs.getconnie.com).
+The full guide, including the API reference for embed sessions, is the
+[Embedding SignPages](https://api.getconnie.com/v1/docs#description/embedding-signpages)
+section of the Connie API docs.
 
 ## Developing
 
