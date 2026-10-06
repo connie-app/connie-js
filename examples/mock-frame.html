@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mock SignPage</title>
+    <link rel="stylesheet" href="example.css" />
+    <script src="mock-frame.js" defer></script>
+  </head>
+  <body class="mock">
+    <header>
+      <h1>Mock SignPage</h1>
+      <button id="close" type="button" aria-label="Close">&times;</button>
+    </header>
+    <p>
+      Stands in for a SignPage at <code>/embed/:client_secret</code>, posting the messages the real
+      one posts. Esc is forwarded as <code>close</code>.
+    </p>
+    <p>embed_id: <code id="embed-id"></code></p>
+    <div class="buttons">
+      <button id="signed" type="button">Sign</button>
+      <button id="expired" type="button">Error: expired</button>
+      <button id="no-credits" type="button">Error: no_credits</button>
+      <button id="navigate" type="button">Submit with eID (navigate)</button>
+      <button id="navigate-evil" type="button">Navigate off-origin (ignored)</button>
+    </div>
+  </body>
+</html>

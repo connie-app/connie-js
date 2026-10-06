@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>connie-js example</title>
+    <link rel="stylesheet" href="example.css" />
+    <script src="../dist/v1.js"></script>
+    <script src="example.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <h1>connie-js example</h1>
+      <p>
+        Paste a session URL minted with <code>POST /v1/sign_pages/:id/embed_sessions</code>, or keep
+        the mock SignPage, which runs on another origin and exercises every event.
+      </p>
+      <label for="url">Session URL</label>
+      <input id="url" type="url" />
+      <div class="buttons">
+        <button id="open-url" type="button">Open with url</button>
+        <button id="open-fetch" type="button">Open with fetchUrl (1 s delay)</button>
+        <button id="open-two" type="button">Open two at once</button>
+      </div>
+      <h2>Events</h2>
+      <ol id="log"></ol>
+      <div class="filler">The page scrolls, so you can check the scroll lock.</div>
+    </main>
+  </body>
+</html>

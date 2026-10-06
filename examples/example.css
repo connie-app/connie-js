@@ -1,0 +1,46 @@
+body {
+  font:
+    16px/1.5 system-ui,
+    sans-serif;
+  margin: 0;
+  color: #0f172a;
+}
+
+main {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  margin: 4px 0 12px;
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+button {
+  padding: 8px 12px;
+}
+
+.filler {
+  height: 150vh;
+  color: #64748b;
+}
+
+.mock {
+  padding: 24px;
+}
+
+.mock header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
