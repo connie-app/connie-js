@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { openSignPage } from "../src/v1/embed.js";
 import { CSS } from "../src/v1/styles.js";
-import { FRAME_ORIGIN, SESSION_URL, flush, open, overlays } from "./helpers.js";
+import { FRAME_ORIGIN, SESSION_URL, flush, open, overlays, stubFrameWindow } from "./helpers.js";
 
 describe("options", () => {
   it("throws without options", () => {
@@ -234,7 +234,7 @@ describe("messages", () => {
     expect(dialog.getAttribute("aria-label")).toBe("SignPage");
   });
 
-  it("signed: closes the modal, calls onSigned and then onClose", () => {
+  it("signed: calls onSigned once and keeps the modal open on the frame's confirmation", () => {
     const calls: string[] = [];
     const { post } = open({
       onSigned: () => calls.push("signed"),
@@ -242,6 +242,47 @@ describe("messages", () => {
     });
     post("ready", { title: "T" });
     post("signed");
+    post("signed");
+    expect(overlays()).toHaveLength(1);
+    expect(calls).toEqual(["signed"]);
+  });
+
+  it("signed: the frame's close after signing tears down and calls onClose once", () => {
+    const calls: string[] = [];
+    const { post } = open({
+      onSigned: () => calls.push("signed"),
+      onClose: () => calls.push("close"),
+    });
+    post("signed");
+    post("close");
+    expect(overlays()).toHaveLength(0);
+    expect(calls).toEqual(["signed", "close"]);
+  });
+
+  it("signed: the host can auto-close with embed.close() inside onSigned", () => {
+    const calls: string[] = [];
+    const embed = openSignPage({
+      url: SESSION_URL,
+      onSigned: () => {
+        calls.push("signed");
+        embed.close();
+      },
+      onClose: () => calls.push("close"),
+    });
+    const frame = overlays()[0].querySelector("iframe")!;
+    const frameWindow = stubFrameWindow(frame);
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: {
+          source: "connie-js",
+          v: 1,
+          embedId: new URL(frame.src).searchParams.get("embed_id"),
+          type: "signed",
+        },
+        origin: FRAME_ORIGIN,
+        source: frameWindow,
+      }),
+    );
     expect(overlays()).toHaveLength(0);
     expect(calls).toEqual(["signed", "close"]);
   });
@@ -372,6 +413,10 @@ describe("two embeds", () => {
     ha.post("signed");
     expect(a.onSigned).toHaveBeenCalledOnce();
     expect(b.onSigned).not.toHaveBeenCalled();
+
+    ha.post("close");
+    expect(a.onClose).toHaveBeenCalledOnce();
+    expect(b.onClose).not.toHaveBeenCalled();
     expect(overlays()).toEqual([hb.overlay]);
 
     hb.post("close");
@@ -406,6 +451,7 @@ describe("embed.close()", () => {
       },
     });
     post("signed");
+    post("close");
     expect(overlays()).toHaveLength(0);
     expect(() => vi.runAllTimers()).toThrow("host bug");
     vi.useRealTimers();

@@ -121,6 +121,7 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
   let frameOrigin: string | null = null;
   let closed = false;
   let readyFired = false;
+  let signedFired = false;
 
   const overlay = part(doc, "div", "overlay");
   const dialog = part(doc, "div", "dialog");
@@ -216,7 +217,10 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
         ready(payload.title);
         break;
       case "signed":
-        finish(options.onSigned);
+        if (!signedFired) {
+          signedFired = true;
+          call(options.onSigned);
+        }
         break;
       case "close":
         finish();

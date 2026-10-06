@@ -188,9 +188,16 @@ All types are exported from the package: `ConnieJs`, `SignPageEmbed`,
 | Callback   | When                                                                                                                  |
 | ---------- | --------------------------------------------------------------------------------------------------------------------- |
 | `onReady`  | The SignPage has loaded and the signer can use it. Called once.                                                       |
-| `onSigned` | The signer signed. The modal closes, then `onClose` follows.                                                          |
-| `onClose`  | The modal is gone, whatever closed it: the signer, Esc, your `close()`, a signature or an error. Called once.         |
+| `onSigned` | The signer signed. Called once. The modal stays open on the SignPage's own confirmation until the signer closes it.   |
+| `onClose`  | The modal is gone, whatever closed it: the signer, Esc, your `close()` or an error. Called once.                      |
 | `onError`  | The embed failed. The modal closes, then `onClose` follows. Without an `onError`, the error is logged to the console. |
+
+To close the modal as soon as the signer signs, instead of leaving them on the
+confirmation, close it from `onSigned`:
+
+```js
+const embed = connie.openSignPage({ url, onSigned: () => embed.close() });
+```
 
 Error codes:
 

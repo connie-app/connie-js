@@ -32,6 +32,7 @@ describe("CSP", () => {
     const h = open();
     h.post("ready", { title: "Addendum" });
     h.post("signed");
+    h.post("close");
     return h;
   };
 

@@ -25,7 +25,11 @@ export interface OpenSignPageOptions {
   fetchUrl?: () => Promise<string>;
   /** The SignPage is loaded and interactive. */
   onReady?: () => void;
-  /** The signer signed. A UI signal only: the `contract.signed` webhook is the record. */
+  /**
+   * The signer signed. The modal stays open on the SignPage's own confirmation
+   * until the signer closes it; call `embed.close()` here to close it at once.
+   * A UI signal only: the `contract.signed` webhook is the record.
+   */
   onSigned?: () => void;
   /** The modal is gone. Called exactly once per embed, whatever closed it. */
   onClose?: () => void;
