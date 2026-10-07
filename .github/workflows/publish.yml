@@ -4,6 +4,9 @@ on:
   push:
     tags: ["v*"]
 
+# Trusted publishing (OIDC): npm accepts this workflow's short-lived identity
+# token, so there is no npm token anywhere. The trusted publisher is configured
+# on npmjs.com for connie-app/connie-js and this file, publish.yml.
 permissions:
   contents: read
   id-token: write
@@ -16,8 +19,11 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
-          cache: npm
           registry-url: https://registry.npmjs.org
+          # No dependency cache in a release build.
+          package-manager-cache: false
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install --global npm@^11.5.1
       - name: Tag matches package version
         run: |
           version="v$(node -p 'require("./package.json").version')"
@@ -31,6 +37,5 @@ jobs:
       - run: npm test
       - run: npm run size
       - run: npm run check:package
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Provenance is generated automatically under trusted publishing.
+      - run: npm publish --access public
