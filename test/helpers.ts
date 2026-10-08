@@ -5,11 +5,31 @@ import type { OpenSignPageOptions, SignPageEmbed } from "../src/types.js";
 export const SESSION_URL = "https://sign.page/embed/cs_test_123";
 export const FRAME_ORIGIN = "https://sign.page";
 
+/**
+ * connie-js attaches a closed shadow root, so `host.shadowRoot` is null. The
+ * tests keep each root as it is attached, the way a debugger would see it.
+ */
+const roots = new WeakMap<Element, ShadowRoot>();
+const attachShadow = Element.prototype.attachShadow;
+Element.prototype.attachShadow = function (this: Element, init: ShadowRootInit) {
+  const root = attachShadow.call(this, init);
+  roots.set(this, root);
+  return root;
+};
+
+export const rootOf = (host: Element): ShadowRoot => roots.get(host)!;
+
 export interface Harness {
   embed: SignPageEmbed;
+  /** The shadow host on document.body. */
+  host: HTMLElement;
+  root: ShadowRoot;
   overlay: HTMLElement;
   dialog: HTMLElement;
   frame: HTMLIFrameElement;
+  closeButton: HTMLButtonElement;
+  /** The skeleton, or null once it is gone. */
+  skeleton: () => HTMLElement | null;
   /** Stands in for the iframe's window, which happy-dom does not create without loading the page. */
   frameWindow: Window;
   embedId: () => string;
@@ -29,9 +49,9 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-/** The overlays connie-js currently has on the page, oldest first. */
-export const overlays = (): HTMLElement[] =>
-  Array.from(document.querySelectorAll<HTMLElement>(".connie-js-overlay"));
+/** The shadow hosts connie-js currently has on the page, oldest first. */
+export const hosts = (): HTMLElement[] =>
+  Array.from(document.querySelectorAll<HTMLElement>("[data-connie-js]"));
 
 export function stubFrameWindow(frame: HTMLIFrameElement): Window {
   const frameWindow = { name: "frame" } as unknown as Window;
@@ -39,12 +59,19 @@ export function stubFrameWindow(frame: HTMLIFrameElement): Window {
   return frameWindow;
 }
 
+export function frameOf(host: HTMLElement): HTMLIFrameElement {
+  return rootOf(host).querySelector("iframe")!;
+}
+
 export function open(options: Partial<OpenSignPageOptions> = {}): Harness {
   const embed = openSignPage(options.fetchUrl ? options : { url: SESSION_URL, ...options });
   opened.push(embed);
-  const overlay = overlays().at(-1)!;
-  const dialog = overlay.querySelector<HTMLElement>('[role="dialog"]')!;
-  const frame = overlay.querySelector("iframe")!;
+  const host = hosts().at(-1)!;
+  const root = rootOf(host);
+  const overlay = root.querySelector<HTMLElement>(".overlay")!;
+  const dialog = root.querySelector<HTMLElement>('[role="dialog"]')!;
+  const frame = root.querySelector("iframe")!;
+  const closeButton = root.querySelector<HTMLButtonElement>("button")!;
   const frameWindow = stubFrameWindow(frame);
   const embedId = () => new URL(frame.src).searchParams.get("embed_id")!;
   const post: Harness["post"] = (type, payload, overrides = {}) => {
@@ -57,7 +84,19 @@ export function open(options: Partial<OpenSignPageOptions> = {}): Harness {
       } as MessageEventInit),
     );
   };
-  return { embed, overlay, dialog, frame, frameWindow, embedId, post };
+  return {
+    embed,
+    host,
+    root,
+    overlay,
+    dialog,
+    frame,
+    closeButton,
+    skeleton: () => root.querySelector<HTMLElement>(".skeleton"),
+    frameWindow,
+    embedId,
+    post,
+  };
 }
 
 export const flush = () => new Promise((resolve) => setTimeout(resolve, 0));

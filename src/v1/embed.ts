@@ -1,11 +1,14 @@
 import type { ConnieEmbedError, OpenSignPageOptions, SignPageEmbed } from "../types.js";
-import { part } from "./styles.js";
+import { FADE_MS, LINE_WIDTHS, shadow, type Styler } from "./styles.js";
 import { parseAllowedUrl, randomId, withEmbedId } from "./url.js";
 
 const FALLBACK_LABEL = "SignPage";
+const SVG = "http://www.w3.org/2000/svg";
 
 interface OpenEmbed {
-  overlay: HTMLElement;
+  /** The shadow host on `document.body`; everything else is inside its closed root. */
+  host: HTMLElement;
+  root: ShadowRoot;
   frame: HTMLIFrameElement;
   close(): void;
 }
@@ -58,6 +61,12 @@ function lockScroll(doc: Document): () => void {
   };
 }
 
+/**
+ * Esc reaches this listener only while focus is on the host page or on
+ * connie-js's close button. While focus is inside the iframe, the keystroke
+ * belongs to the frame, which closes its own popovers first and otherwise
+ * forwards Esc as a `close` message.
+ */
 function onKeydown(event: KeyboardEvent): void {
   const top = stack[stack.length - 1];
   if (top && event.key === "Escape") {
@@ -69,7 +78,9 @@ function onKeydown(event: KeyboardEvent): void {
 
 function onFocusin(event: FocusEvent): void {
   const top = stack[stack.length - 1];
-  if (top && !top.overlay.contains(event.target as Node)) top.frame.focus();
+  // Browsers retarget focus inside the shadow root to its host at the document.
+  const target = event.target as Node;
+  if (top && target !== top.host && !top.root.contains(target)) top.frame.focus();
 }
 
 function listen(doc: Document, on: boolean): void {
@@ -82,6 +93,59 @@ function listen(doc: Document, on: boolean): void {
     doc.removeEventListener("keydown", onKeydown, true);
     doc.removeEventListener("focusin", onFocusin, true);
   }
+}
+
+function reducedMotion(): boolean {
+  return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/**
+ * A placeholder of the SignPage, shown until `ready`: the frame's header band
+ * with a title bar, then a document column with a heading and lines of text.
+ */
+function skeleton(styler: Styler): HTMLElement {
+  const loading = styler.part("div", "skeleton");
+  loading.setAttribute("aria-hidden", "true");
+  const head = styler.part("div", "head");
+  head.append(styler.part("div", "bar", "title"));
+  const page = styler.part("div", "page");
+  page.append(
+    styler.part("div", "bar", "heading"),
+    ...LINE_WIDTHS.map(() => styler.part("div", "bar", "line")),
+  );
+  loading.append(head, page);
+  return loading;
+}
+
+/**
+ * The modal's one close button, shown from open to teardown at the same
+ * place: 40×40, 8px from the dialog's top and right edges, centred in the
+ * right 56px of the frame's header band, which the frame leaves empty when
+ * connie-js frames it.
+ */
+function closeButtonOf(doc: Document, styler: Styler): HTMLButtonElement {
+  const button = styler.part("button", "close");
+  button.type = "button";
+  button.setAttribute("aria-label", "Close");
+  const icon = doc.createElementNS(SVG, "svg");
+  for (const [k, v] of [
+    ["width", "20"],
+    ["height", "20"],
+    ["viewBox", "0 0 24 24"],
+    ["fill", "none"],
+    ["stroke", "currentColor"],
+    ["stroke-width", "2"],
+    ["stroke-linecap", "round"],
+    ["stroke-linejoin", "round"],
+    ["aria-hidden", "true"],
+  ]) {
+    icon.setAttribute(k, v);
+  }
+  const path = doc.createElementNS(SVG, "path");
+  path.setAttribute("d", "M18 6 6 18M6 6l12 12");
+  icon.append(path);
+  button.append(icon);
+  return button;
 }
 
 function toError(payload: Record<string, unknown>): ConnieEmbedError {
@@ -123,28 +187,25 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
   let readyFired = false;
   let signedFired = false;
 
-  const overlay = part(doc, "div", "overlay");
-  const dialog = part(doc, "div", "dialog");
+  const { host, root, styler } = shadow(doc);
+  const overlay = styler.part("div", "overlay");
+  const dialog = styler.part("div", "dialog");
   dialog.setAttribute("role", "dialog");
   dialog.setAttribute("aria-modal", "true");
   dialog.setAttribute("aria-label", FALLBACK_LABEL);
   dialog.setAttribute("aria-busy", "true");
 
-  const frame = part(doc, "iframe", "frame");
+  // The iframe sits under the skeleton from the start, invisible until `ready`.
+  const frame = styler.part("iframe", "frame");
   frame.title = FALLBACK_LABEL;
   frame.setAttribute("allow", "camera");
 
-  const loading = part(doc, "div", "loading");
-  loading.setAttribute("aria-hidden", "true");
-  loading.append(part(doc, "div", "spinner"));
-
-  const closeButton = part(doc, "button", "close");
-  closeButton.type = "button";
-  closeButton.setAttribute("aria-label", "Close");
-  closeButton.textContent = "×";
+  const loading = skeleton(styler);
+  const closeButton = closeButtonOf(doc, styler);
 
   dialog.append(frame, loading, closeButton);
   overlay.append(dialog);
+  root.append(overlay);
 
   const finish = (callback?: () => void): void => {
     if (closed) return;
@@ -152,7 +213,7 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
     window.removeEventListener("message", onMessage);
     const wasTop = stack[stack.length - 1] === embed;
     stack.splice(stack.indexOf(embed), 1);
-    overlay.remove();
+    host.remove();
     if (!stack.length) {
       listen(doc, false);
       unlockScroll?.();
@@ -179,11 +240,15 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
       dialog.setAttribute("aria-label", label);
       frame.title = label;
     }
-    if (loading.isConnected) {
-      if (doc.activeElement === closeButton) frame.focus();
-      loading.remove();
-      closeButton.remove();
+    if (dialog.hasAttribute("aria-busy")) {
       dialog.removeAttribute("aria-busy");
+      styler.mark(frame, "shown");
+      if (reducedMotion()) {
+        loading.remove();
+      } else {
+        styler.mark(loading, "faded");
+        setTimeout(() => loading.remove(), FADE_MS);
+      }
     }
     if (!readyFired) {
       readyFired = true;
@@ -242,13 +307,13 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
   };
 
   closeButton.addEventListener("click", () => finish());
-  const embed: OpenEmbed = { overlay, frame, close: () => finish() };
+  const embed: OpenEmbed = { host, root, frame, close: () => finish() };
 
   stack.push(embed);
   if (!unlockScroll) unlockScroll = lockScroll(doc);
   listen(doc, true);
   window.addEventListener("message", onMessage);
-  doc.body.append(overlay);
+  doc.body.append(host);
   frame.focus();
 
   if (initial) {

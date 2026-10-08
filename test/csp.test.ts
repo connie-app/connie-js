@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { open, overlays } from "./helpers.js";
+import { hosts, open, rootOf } from "./helpers.js";
 
 /**
  * connie-js must work under a host CSP with no `style-src` exception: it may
@@ -36,11 +36,16 @@ describe("CSP", () => {
     return h;
   };
 
-  it("adds no <style>, <link> or <script> elements over a whole embed", async () => {
-    fullCycle();
+  it("adds no <style>, <link> or <script> elements over a whole embed, inside or outside the shadow root", async () => {
+    const h = open();
+    const inside = Array.from(h.root.querySelectorAll("*"), (el) => el.tagName);
+    h.post("ready", { title: "Addendum" });
+    h.post("signed");
+    h.post("close");
     await Promise.resolve();
-    expect(added.length).toBeGreaterThan(0);
-    expect(added.filter((tag) => ["STYLE", "LINK", "SCRIPT"].includes(tag))).toEqual([]);
+    expect(added).toEqual(["DIV"]);
+    expect(inside).toContain("IFRAME");
+    expect(inside.filter((tag) => ["STYLE", "LINK", "SCRIPT"].includes(tag))).toEqual([]);
     expect(document.querySelectorAll("style, link, script")).toHaveLength(0);
   });
 
@@ -56,10 +61,10 @@ describe("CSP", () => {
     expect(insertAdjacentHTML).not.toHaveBeenCalled();
   });
 
-  it("serialises the overlay without any style attribute", () => {
-    const { overlay } = open();
-    expect(overlay.outerHTML).not.toMatch(/style=/i);
-    expect(overlays()).toHaveLength(1);
+  it("styles nothing inside the shadow root inline when the stylesheet is adopted", () => {
+    const { root } = open();
+    expect(Array.from(root.querySelectorAll("[style]"))).toEqual([]);
+    expect(hosts()).toHaveLength(1);
   });
 
   it("the built script contains no HTML-string or inline-style APIs", () => {
@@ -100,13 +105,52 @@ describe("without constructable stylesheets", () => {
   it("falls back to element.style through CSSOM, still without <style> elements", async () => {
     const { openSignPage } = await import("../src/v1/embed.js");
     const embed = openSignPage({ url: "https://sign.page/embed/x" });
-    const overlay = document.querySelector<HTMLElement>(".connie-js-overlay")!;
-    const dialog = overlay.querySelector<HTMLElement>(".connie-js-dialog")!;
-    expect(overlay.style.getPropertyValue("z-index")).toBe("2147483000");
-    expect(overlay.style.getPropertyPriority("z-index")).toBe("important");
-    expect(overlay.style.getPropertyValue("position")).toBe("fixed");
+    const host = hosts()[0];
+    const root = rootOf(host);
+    expect(root.adoptedStyleSheets).toEqual([]);
+    const overlay = root.querySelector<HTMLElement>(".overlay")!;
+    const dialog = root.querySelector<HTMLElement>(".dialog")!;
+    const close = root.querySelector<HTMLElement>(".close")!;
+    expect(host.style.getPropertyValue("z-index")).toBe("2147483000");
+    expect(host.style.getPropertyPriority("z-index")).toBe("important");
+    expect(host.style.getPropertyValue("position")).toBe("fixed");
+    expect(overlay.style.getPropertyValue("position")).toBe("absolute");
+    expect(overlay.style.getPropertyPriority("position")).toBe("important");
     expect(dialog.style.getPropertyValue("max-width")).toBe("none");
+    expect(close.style.getPropertyValue("top")).toBe("8px");
+    expect(close.style.getPropertyValue("right")).toBe("8px");
+    expect(root.querySelectorAll("style")).toHaveLength(0);
     expect(document.querySelectorAll("style")).toHaveLength(0);
     embed.close();
+  });
+
+  it("still cross-fades from the skeleton to the frame inline", async () => {
+    vi.useFakeTimers();
+    const { openSignPage } = await import("../src/v1/embed.js");
+    const embed = openSignPage({ url: "https://sign.page/embed/x" });
+    const root = rootOf(hosts()[0]);
+    const frame = root.querySelector("iframe")!;
+    Object.defineProperty(frame, "contentWindow", { value: {}, configurable: true });
+    expect(frame.style.getPropertyValue("opacity")).toBe("0");
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: {
+          source: "connie-js",
+          v: 1,
+          embedId: new URL(frame.src).searchParams.get("embed_id"),
+          type: "ready",
+        },
+        origin: "https://sign.page",
+        source: frame.contentWindow,
+      }),
+    );
+    expect(frame.style.getPropertyValue("opacity")).toBe("1");
+    expect(root.querySelector<HTMLElement>(".skeleton")!.style.getPropertyValue("opacity")).toBe(
+      "0",
+    );
+    vi.advanceTimersByTime(200);
+    expect(root.querySelector(".skeleton")).toBeNull();
+    embed.close();
+    vi.useRealTimers();
   });
 });

@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { openSignPage } from "../src/v1/embed.js";
 import { CSS } from "../src/v1/styles.js";
-import { FRAME_ORIGIN, SESSION_URL, flush, open, overlays, stubFrameWindow } from "./helpers.js";
+import {
+  FRAME_ORIGIN,
+  SESSION_URL,
+  flush,
+  frameOf,
+  hosts,
+  open,
+  stubFrameWindow,
+} from "./helpers.js";
 
 describe("options", () => {
   it("throws without options", () => {
@@ -28,7 +36,7 @@ describe("options", () => {
       /must be an https URL/,
     );
     expect(() => openSignPage({ url: "javascript:alert(1)" })).toThrow(TypeError);
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
     expect(onError).not.toHaveBeenCalled();
   });
 
@@ -72,53 +80,224 @@ describe("the overlay", () => {
     expect(dialog.getAttribute("aria-busy")).toBe("true");
   });
 
-  it("uses namespaced class names only", () => {
-    const { overlay } = open();
-    const classes = [overlay, ...overlay.querySelectorAll("*")].map((el) => el.className);
-    expect(classes).toEqual([
-      "connie-js-overlay",
-      "connie-js-dialog",
-      "connie-js-frame",
-      "connie-js-loading",
-      "connie-js-spinner",
-      "connie-js-close",
-    ]);
+  it("lives in a closed shadow root on a single host appended to body", () => {
+    const { host, root, dialog, frame } = open();
+    expect(host.parentNode).toBe(document.body);
+    expect(host.tagName).toBe("DIV");
+    expect(host.shadowRoot).toBeNull();
+    expect(root.mode).toBe("closed");
+    expect(host.childNodes).toHaveLength(0);
+    expect(dialog.getRootNode()).toBe(root);
+    expect(frame.getRootNode()).toBe(root);
+    expect(document.querySelector("iframe, [role=dialog], button")).toBeNull();
   });
 
-  it("styles itself with an adopted stylesheet: top z-index, spinner keyframes, full screen below 640px", () => {
-    open();
-    const sheet = document.adoptedStyleSheets.at(-1)!;
-    const text = Array.from(sheet.cssRules, (r) => r.cssText).join("\n");
-    expect(CSS).toContain("z-index:2147483000");
-    expect(text).toContain("2147483000");
-    expect(CSS).toContain("@keyframes connie-js-spin");
-    expect(CSS).toMatch(
-      /@media \(max-width:639\.98px\)\{\.connie-js-overlay\{padding:0!important\}\.connie-js-dialog\{max-width:none!important;max-height:none!important;border-radius:0!important/,
+  it("gives the host all: initial and a fixed full-viewport box, inline and !important", () => {
+    const { host } = open();
+    const prop = (name: string) => [
+      host.style.getPropertyValue(name),
+      host.style.getPropertyPriority(name),
+    ];
+    expect(prop("position")).toEqual(["fixed", "important"]);
+    expect(prop("display")).toEqual(["block", "important"]);
+    expect(prop("z-index")).toEqual(["2147483000", "important"]);
+    expect(prop("top")).toEqual(["0px", "important"]);
+    expect(prop("left")).toEqual(["0px", "important"]);
+    expect(prop("right")).toEqual(["0px", "important"]);
+    expect(host.style.getPropertyValue("all")).toBe("initial");
+    expect(host.style.getPropertyPriority("all")).toBe("important");
+  });
+
+  it("styles the inside with one shared adopted stylesheet, never the document's", () => {
+    const before = document.adoptedStyleSheets.length;
+    const a = open();
+    const b = open();
+    expect(document.adoptedStyleSheets.length).toBe(before);
+    expect(a.root.adoptedStyleSheets).toHaveLength(1);
+    expect(a.root.adoptedStyleSheets[0]).toBe(b.root.adoptedStyleSheets[0]);
+    const text = Array.from(a.root.adoptedStyleSheets[0].cssRules, (r) => r.cssText).join("\n");
+    expect(text).toContain("connie-shimmer");
+  });
+
+  it("has a 760 × 900 panel, 12px radius, white, and full screen with safe-area insets below 640px", () => {
+    expect(CSS).toMatch(/\.dialog\{[^}]*max-width:760px;[^}]*max-height:900px;/);
+    expect(CSS).toMatch(/\.dialog\{[^}]*background:#ffffff;border-radius:12px/);
+    expect(CSS).toMatch(/\.overlay\{[^}]*padding:24px;/);
+    expect(CSS).toContain(
+      "@media (max-width:639.98px){.overlay{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);background:#ffffff}.dialog{max-width:none;max-height:none;border-radius:0;box-shadow:none}}",
     );
   });
 
-  it("adopts the stylesheet once however many embeds open", () => {
-    open();
-    const count = document.adoptedStyleSheets.length;
-    open();
-    open();
-    expect(document.adoptedStyleSheets.length).toBe(count);
+  it("is laid out in the dialog's own computed styles, out of reach of hostile page styles", () => {
+    const hostile = new CSSStyleSheet();
+    hostile.replaceSync(
+      "*{all:unset}button{display:none!important}iframe{display:none!important;opacity:.1!important}div{display:none!important}",
+    );
+    document.adoptedStyleSheets = [hostile];
+    try {
+      const { host, dialog, frame, closeButton } = open();
+      expect(getComputedStyle(dialog).maxWidth).toBe("760px");
+      expect(getComputedStyle(dialog).borderRadius).toBe("12px");
+      expect(getComputedStyle(closeButton).display).toBe("flex");
+      expect(getComputedStyle(closeButton).width).toBe("40px");
+      expect(getComputedStyle(frame).display).toBe("block");
+      expect(getComputedStyle(frame).opacity).toBe("0");
+      expect(getComputedStyle(host).position).toBe("fixed");
+      expect(getComputedStyle(host).display).toBe("block");
+    } finally {
+      document.adoptedStyleSheets = [];
+    }
+  });
+});
+
+describe("the close button", () => {
+  it("is a labelled button with an SVG X drawn through the DOM", () => {
+    const { closeButton } = open();
+    expect(closeButton.type).toBe("button");
+    expect(closeButton.getAttribute("aria-label")).toBe("Close");
+    expect(closeButton.textContent).toBe("");
+    const svg = closeButton.firstElementChild!;
+    expect(svg.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    expect(svg.getAttribute("width")).toBe("20");
+    expect(svg.getAttribute("height")).toBe("20");
+    expect(svg.getAttribute("aria-hidden")).toBe("true");
+    expect(svg.getAttribute("stroke")).toBe("currentColor");
+    expect(svg.querySelector("path")!.getAttribute("d")).toBe("M18 6 6 18M6 6l12 12");
   });
 
-  it("shows a spinner and a close button until ready", () => {
-    const { overlay } = open();
-    expect(overlay.querySelector(".connie-js-spinner")).not.toBeNull();
-    const close = overlay.querySelector<HTMLButtonElement>(".connie-js-close")!;
-    expect(close.type).toBe("button");
-    expect(close.getAttribute("aria-label")).toBe("Close");
+  it("is 40 × 40 at 8px from the dialog's top and right, above the frame, in Connie's colours", () => {
+    const { closeButton, frame } = open();
+    const style = getComputedStyle(closeButton);
+    expect([style.position, style.top, style.right, style.width, style.height]).toEqual([
+      "absolute",
+      "8px",
+      "8px",
+      "40px",
+      "40px",
+    ]);
+    expect(style.borderRadius).toBe("8px");
+    expect(Number(style.zIndex)).toBeGreaterThan(Number(getComputedStyle(frame).zIndex));
+    expect(CSS).toMatch(/\.close\{[^}]*color:#525252/);
+    expect(CSS).toContain(".close:hover{background:#f5f5f5}");
+    expect(CSS).toContain(".close:focus-visible{outline:2px solid #9e36ff;outline-offset:2px}");
   });
 
-  it("closes from its own close button before ready", () => {
+  it("is the same element, in the same place, from open to teardown", () => {
+    const h = open();
+    const place = () => {
+      const style = getComputedStyle(h.closeButton);
+      return [style.position, style.top, style.right, style.zIndex];
+    };
+    const buttons = () => Array.from(h.root.querySelectorAll("button"));
+    const before = place();
+    expect(buttons()).toEqual([h.closeButton]);
+    h.post("ready", { title: "Data processing addendum" });
+    expect(buttons()).toEqual([h.closeButton]);
+    expect(h.closeButton.parentNode).toBe(h.dialog);
+    expect(place()).toEqual(before);
+    h.post("signed");
+    expect(buttons()).toEqual([h.closeButton]);
+    expect(place()).toEqual(before);
+  });
+
+  it("tears down and calls onClose once, before ready", () => {
     const onClose = vi.fn();
-    const { overlay } = open({ onClose });
-    overlay.querySelector<HTMLButtonElement>(".connie-js-close")!.click();
-    expect(overlays()).toHaveLength(0);
+    const { closeButton } = open({ onClose });
+    closeButton.click();
+    closeButton.click();
+    expect(hosts()).toHaveLength(0);
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("tears down and calls onClose once, after ready", () => {
+    const onClose = vi.fn();
+    const { closeButton, post } = open({ onClose });
+    post("ready", { title: "T" });
+    closeButton.click();
+    expect(hosts()).toHaveLength(0);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the skeleton", () => {
+  it("is a hidden placeholder of the SignPage: a header band with a title bar, then a paper column", () => {
+    const { skeleton, dialog } = open();
+    const el = skeleton()!;
+    expect(el.parentNode).toBe(dialog);
+    expect(el.getAttribute("aria-hidden")).toBe("true");
+    const [head, page] = Array.from(el.children);
+    expect(head.className).toBe("head");
+    expect(Array.from(head.children, (c) => c.className)).toEqual(["bar title"]);
+    expect(page.className).toBe("page");
+    const lines = Array.from(page.children).filter((c) => c.className === "bar line");
+    expect(page.firstElementChild!.className).toBe("bar heading");
+    expect(lines.length).toBeGreaterThanOrEqual(8);
+    expect(lines.length).toBeLessThanOrEqual(10);
+    expect(getComputedStyle(head).height).toBe("56px");
+    expect(getComputedStyle(page).maxWidth).toBe("640px");
+  });
+
+  it("matches the frame's header band and colours, and shimmers", () => {
+    expect(CSS).toMatch(
+      /\.head\{[^}]*height:56px;padding:0 72px 0 16px;[^}]*border-bottom:1px solid #e5e5e5/,
+    );
+    expect(CSS).toMatch(/\.head\{[^}]*background:#ffffff/);
+    expect(CSS).toMatch(/\.skeleton\{[^}]*background:#e2e8f0/);
+    expect(CSS).toMatch(
+      /\.page\{[^}]*max-width:640px;margin:24px auto 0;[^}]*border-radius:8px;background:#ffffff/,
+    );
+    expect(CSS).toMatch(/\.title\{width:40%/);
+    expect(CSS).toMatch(/\.bar\{[^}]*#ebebeb[^}]*animation:connie-shimmer/);
+    expect(CSS).toContain("@keyframes connie-shimmer");
+  });
+
+  it("stops shimmering and fading under prefers-reduced-motion", () => {
+    expect(CSS).toContain(
+      "@media (prefers-reduced-motion:reduce){.bar{animation:none}.frame,.skeleton{transition:none}}",
+    );
+  });
+
+  it("covers the frame until ready, then cross-fades to it and is removed", () => {
+    vi.useFakeTimers();
+    try {
+      const { skeleton, frame, dialog, post } = open();
+      const el = skeleton()!;
+      expect(getComputedStyle(frame).opacity).toBe("0");
+      expect(getComputedStyle(el).opacity).not.toBe("0");
+      expect(Number(getComputedStyle(el).zIndex)).toBeGreaterThan(
+        Number(getComputedStyle(frame).zIndex),
+      );
+      expect(CSS).toMatch(/\.frame\{[^}]*transition:opacity 200ms/);
+      expect(CSS).toMatch(/\.skeleton\{[^}]*transition:opacity 200ms/);
+
+      post("ready", { title: "T" });
+      expect(dialog.hasAttribute("aria-busy")).toBe(false);
+      expect(getComputedStyle(frame).opacity).toBe("1");
+      expect(skeleton()).toBe(el);
+      expect(getComputedStyle(el).opacity).toBe("0");
+
+      vi.advanceTimersByTime(200);
+      expect(skeleton()).toBeNull();
+      expect(el.isConnected).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("is swapped for the frame at once under prefers-reduced-motion", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({ matches: query.includes("reduce"), media: query })),
+    );
+    try {
+      const { skeleton, frame, post } = open();
+      expect(skeleton()).not.toBeNull();
+      post("ready", { title: "T" });
+      expect(skeleton()).toBeNull();
+      expect(getComputedStyle(frame).opacity).toBe("1");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
@@ -127,8 +306,9 @@ describe("focus", () => {
     const button = document.createElement("button");
     document.body.append(button);
     button.focus();
-    const { embed, frame } = open();
-    expect(document.activeElement).toBe(frame);
+    const { embed, frame, host, root } = open();
+    expect(document.activeElement).toBe(host);
+    expect(root.activeElement).toBe(frame);
     embed.close();
     expect(document.activeElement).toBe(button);
   });
@@ -136,16 +316,31 @@ describe("focus", () => {
   it("is kept inside the dialog", () => {
     const outside = document.createElement("input");
     document.body.append(outside);
-    const { frame } = open();
+    const { frame, root } = open();
     outside.focus();
-    expect(document.activeElement).toBe(frame);
+    expect(root.activeElement).toBe(frame);
   });
 
-  it("moves from the close button to the iframe when ready removes the button", () => {
-    const { overlay, frame, post } = open();
-    overlay.querySelector<HTMLButtonElement>(".connie-js-close")!.focus();
+  it("may rest on the close button, inside the shadow root", () => {
+    const { closeButton, host, root } = open();
+    closeButton.focus();
+    expect(document.activeElement).toBe(host);
+    expect(root.activeElement).toBe(closeButton);
+  });
+
+  it("stays on the close button when ready arrives", () => {
+    const { closeButton, root, post } = open();
+    closeButton.focus();
     post("ready", { title: "Data processing addendum" });
-    expect(document.activeElement).toBe(frame);
+    expect(root.activeElement).toBe(closeButton);
+  });
+
+  it("moves to the next embed's iframe when the top one closes", () => {
+    const a = open();
+    const b = open();
+    b.embed.close();
+    expect(document.activeElement).toBe(a.host);
+    expect(a.root.activeElement).toBe(a.frame);
   });
 });
 
@@ -190,7 +385,7 @@ describe("Esc", () => {
     open({ onClose });
     esc();
     esc();
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
     expect(onClose).toHaveBeenCalledOnce();
   });
 
@@ -202,23 +397,34 @@ describe("Esc", () => {
     esc();
     expect(second).toHaveBeenCalledOnce();
     expect(first).not.toHaveBeenCalled();
-    expect(overlays()).toEqual([a.overlay]);
+    expect(hosts()).toEqual([a.host]);
+  });
+
+  it("closes while focus is on the close button inside the shadow root", () => {
+    const onClose = vi.fn();
+    const { closeButton } = open({ onClose });
+    closeButton.focus();
+    closeButton.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }),
+    );
+    expect(hosts()).toHaveLength(0);
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("ignores other keys", () => {
     open();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    expect(overlays()).toHaveLength(1);
+    expect(hosts()).toHaveLength(1);
   });
 });
 
 describe("messages", () => {
-  it("ready: hides the spinner, labels the dialog and iframe with the title, calls onReady once", () => {
+  it("ready: shows the frame, labels the dialog and iframe with the title, calls onReady once", () => {
     const onReady = vi.fn();
-    const { dialog, frame, overlay, post } = open({ onReady });
+    const { dialog, frame, closeButton, post } = open({ onReady });
     post("ready", { title: "AI Processing Addendum" });
-    expect(overlay.querySelector(".connie-js-spinner")).toBeNull();
-    expect(overlay.querySelector(".connie-js-close")).toBeNull();
+    expect(getComputedStyle(frame).opacity).toBe("1");
+    expect(closeButton.isConnected).toBe(true);
     expect(dialog.hasAttribute("aria-busy")).toBe(false);
     expect(dialog.getAttribute("aria-label")).toBe("AI Processing Addendum");
     expect(frame.title).toBe("AI Processing Addendum");
@@ -243,7 +449,7 @@ describe("messages", () => {
     post("ready", { title: "T" });
     post("signed");
     post("signed");
-    expect(overlays()).toHaveLength(1);
+    expect(hosts()).toHaveLength(1);
     expect(calls).toEqual(["signed"]);
   });
 
@@ -255,7 +461,7 @@ describe("messages", () => {
     });
     post("signed");
     post("close");
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
     expect(calls).toEqual(["signed", "close"]);
   });
 
@@ -269,7 +475,7 @@ describe("messages", () => {
       },
       onClose: () => calls.push("close"),
     });
-    const frame = overlays()[0].querySelector("iframe")!;
+    const frame = frameOf(hosts()[0]);
     const frameWindow = stubFrameWindow(frame);
     window.dispatchEvent(
       new MessageEvent("message", {
@@ -283,7 +489,7 @@ describe("messages", () => {
         source: frameWindow,
       }),
     );
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
     expect(calls).toEqual(["signed", "close"]);
   });
 
@@ -293,7 +499,7 @@ describe("messages", () => {
     post("close");
     post("close");
     embed.close();
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
     expect(onClose).toHaveBeenCalledOnce();
   });
 
@@ -304,7 +510,7 @@ describe("messages", () => {
       onClose: () => calls.push("close"),
     });
     post("error", { code: "expired", message: "This link has expired." });
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
     expect(calls).toEqual([{ code: "expired", message: "This link has expired." }, "close"]);
   });
 
@@ -350,7 +556,7 @@ describe("messages", () => {
   it("ignores unknown message types", () => {
     const onClose = vi.fn();
     open({ onClose }).post("resize", { height: 10 });
-    expect(overlays()).toHaveLength(1);
+    expect(hosts()).toHaveLength(1);
     expect(onClose).not.toHaveBeenCalled();
   });
 });
@@ -391,7 +597,7 @@ describe("message rejection", () => {
     const onClose = vi.fn();
     const h = open({ onClose });
     send(h);
-    expect(overlays()).toHaveLength(1);
+    expect(hosts()).toHaveLength(1);
     expect(onClose).not.toHaveBeenCalled();
   });
 });
@@ -417,7 +623,7 @@ describe("two embeds", () => {
     ha.post("close");
     expect(a.onClose).toHaveBeenCalledOnce();
     expect(b.onClose).not.toHaveBeenCalled();
-    expect(overlays()).toEqual([hb.overlay]);
+    expect(hosts()).toEqual([hb.host]);
 
     hb.post("close");
     expect(b.onClose).toHaveBeenCalledOnce();
@@ -431,7 +637,7 @@ describe("embed.close()", () => {
     const { embed } = open({ onClose });
     embed.close();
     embed.close();
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
     expect(onClose).toHaveBeenCalledOnce();
   });
 
@@ -452,18 +658,18 @@ describe("embed.close()", () => {
     });
     post("signed");
     post("close");
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
     expect(() => vi.runAllTimers()).toThrow("host bug");
     vi.useRealTimers();
   });
 });
 
 describe("fetchUrl", () => {
-  it("shows the spinner while fetching, then frames the url it resolves with", async () => {
+  it("shows the skeleton while fetching, then frames the url it resolves with", async () => {
     let resolve!: (url: string) => void;
     const fetchUrl = vi.fn(() => new Promise<string>((r) => (resolve = r)));
-    const { frame, overlay } = open({ fetchUrl });
-    expect(overlay.querySelector(".connie-js-spinner")).not.toBeNull();
+    const { frame, skeleton } = open({ fetchUrl });
+    expect(skeleton()).not.toBeNull();
     expect(frame.getAttribute("src")).toBeNull();
     resolve(SESSION_URL);
     await flush();
@@ -480,7 +686,7 @@ describe("fetchUrl", () => {
     });
     await flush();
     expect(calls).toEqual([{ code: "fetch_failed", message: "backend down" }, "close"]);
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
   });
 
   it("reports fetch_failed when it throws synchronously", async () => {
@@ -503,7 +709,7 @@ describe("fetchUrl", () => {
       code: "invalid_url",
       message: "fetchUrl did not resolve with an https URL",
     });
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
   });
 
   it("does nothing when the embed was closed before it resolved", async () => {
