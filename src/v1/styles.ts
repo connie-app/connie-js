@@ -21,6 +21,9 @@ export const COLORS = {
   canvas: "#e2e8f0",
   placeholder: "#ebebeb",
   shimmer: "#f5f5f5",
+  /** Placeholders on the canvas, where the SignPage's title and subtitle sit. */
+  canvasPlaceholder: "#cbd5e1",
+  canvasShimmer: "#d8dfe8",
   icon: "#525252",
   hover: "#f5f5f5",
   focus: "#9e36ff",
@@ -42,22 +45,67 @@ export const Z_INDEX = "2147483000";
 /** Widths of the skeleton's text lines, in percent. */
 export const LINE_WIDTHS = [100, 96, 98, 88, 100, 94, 97, 91, 64];
 
+/**
+ * The SignPage's frame width below which its document column narrows, its
+ * `sm` breakpoint. The skeleton follows the frame's own width, not the host
+ * page's, through a container query.
+ */
+export const NARROW_BELOW = 640;
+
+/**
+ * The SignPage's document column, which the skeleton copies so the swap on
+ * `ready` does not move: under the header band, the column's padding, then
+ * the SignPage's title (a 32px line) and subtitle (a 28px line), 8px apart,
+ * centred on the canvas, then the paper, square, with its own padding.
+ */
+export const COLUMN = {
+  /** Above the title and either side of the paper: wide, narrow. */
+  inset: [
+    [48, 24],
+    [32, 16],
+  ],
+  /** From the subtitle to the paper: wide, narrow. */
+  gap: [48, 32],
+  maxWidth: 896,
+  paperPadding: [96, 48],
+  paperShadow:
+    "0 12px 16px -4px rgba(10,13,18,.08),0 4px 6px -2px rgba(10,13,18,.03),0 2px 2px -1px rgba(10,13,18,.04),0 9px 7px rgba(0,0,0,.1)",
+} as const;
+
 export type Part =
   | "overlay"
   | "dialog"
   | "frame"
   | "skeleton"
   | "head"
+  | "canvas"
   | "page"
   | "bar"
   | "title"
+  | "h1"
+  | "h2"
   | "heading"
   | "line"
   | "close"
   | "shown"
   | "faded";
 
-const BAR_BACKGROUND = `linear-gradient(90deg,${COLORS.placeholder} 25%,${COLORS.shimmer} 50%,${COLORS.placeholder} 75%) 0 0/200% 100% no-repeat ${COLORS.placeholder}`;
+const shimmer = (from: string, to: string): string =>
+  `linear-gradient(90deg,${from} 25%,${to} 50%,${from} 75%) 0 0/200% 100% no-repeat ${from}`;
+
+const BAR_BACKGROUND = shimmer(COLORS.placeholder, COLORS.shimmer);
+const CANVAS_BAR_BACKGROUND = shimmer(COLORS.canvasPlaceholder, COLORS.canvasShimmer);
+
+/**
+ * The column's vertical rhythm: each placeholder bar sits centred in the line
+ * box of the text it stands for, so the title's 24px bar fills its 32px line
+ * from 4px, and the subtitle's 18px bar its 28px line from 5px.
+ */
+const H1_MARGIN = 4;
+const H2_MARGIN = 4 + 8 + 5;
+const PAGE_MARGIN = (gap: number): number => 5 + gap;
+
+const inset = ([top, side]: readonly [number, number]): string => `padding:${top}px ${side}px 0`;
 
 /**
  * Declarations per class, in cascade order: `shown` and `faded` are state
@@ -68,13 +116,16 @@ const BASE: Record<Part, string> = {
   overlay: `position:absolute;inset:0;display:flex;align-items:center;justify-content:center;margin:0;padding:24px;box-sizing:border-box;background:${COLORS.backdrop}`,
   dialog: `position:relative;width:100%;max-width:760px;height:100%;max-height:900px;margin:0;padding:0;box-sizing:border-box;overflow:hidden;background:${COLORS.surface};border-radius:12px;box-shadow:0 24px 64px rgba(0,0,0,.3)`,
   frame: `position:absolute;inset:0;z-index:0;display:block;width:100%;height:100%;margin:0;padding:0;border:0;opacity:0;transition:opacity ${FADE_MS}ms ease`,
-  skeleton: `position:absolute;inset:0;z-index:1;overflow:hidden;background:${COLORS.canvas};pointer-events:none;transition:opacity ${FADE_MS}ms ease`,
+  skeleton: `position:absolute;inset:0;z-index:1;overflow:hidden;container-type:inline-size;background:${COLORS.canvas};pointer-events:none;transition:opacity ${FADE_MS}ms ease`,
   head: `display:flex;align-items:center;height:${HEADER_BAND}px;padding:0 ${HEADER_BAND + 16}px 0 16px;box-sizing:border-box;border-bottom:1px solid ${COLORS.border};background:${COLORS.surface}`,
-  page: `width:calc(100% - 32px);max-width:640px;margin:24px auto 0;padding:40px 32px;box-sizing:border-box;border-radius:8px;background:${COLORS.surface}`,
+  canvas: `height:calc(100% - ${HEADER_BAND}px);${inset(COLUMN.inset[0])};box-sizing:border-box;overflow:hidden;scrollbar-gutter:stable`,
+  page: `max-width:${COLUMN.maxWidth - 2 * COLUMN.inset[0][1]}px;min-height:200%;margin:${PAGE_MARGIN(COLUMN.gap[0])}px auto 0;padding:${COLUMN.paperPadding[0]}px ${COLUMN.paperPadding[1]}px 0;box-sizing:border-box;border-radius:0;background:${COLORS.surface};box-shadow:${COLUMN.paperShadow}`,
   bar: `display:block;border-radius:6px;background:${BAR_BACKGROUND};animation:connie-shimmer 1.6s linear infinite`,
   title: `width:40%;height:16px`,
-  heading: `width:55%;height:24px;margin-bottom:28px`,
-  line: `height:12px;margin-top:14px`,
+  h1: `width:min(280px,80%);height:24px;margin:${H1_MARGIN}px auto 0;background:${CANVAS_BAR_BACKGROUND}`,
+  h2: `width:min(140px,40%);height:18px;margin:${H2_MARGIN}px auto 0;background:${CANVAS_BAR_BACKGROUND}`,
+  heading: `width:55%;height:24px;margin:4px 0 28px`,
+  line: `height:12px;margin-top:12px`,
   close: `position:absolute;top:8px;right:8px;z-index:2;display:flex;align-items:center;justify-content:center;width:40px;height:40px;margin:0;padding:0;box-sizing:border-box;border:0;border-radius:8px;background:transparent;color:${COLORS.icon};cursor:pointer;-webkit-tap-highlight-color:transparent`,
   shown: `opacity:1`,
   faded: `opacity:0`,
@@ -84,6 +135,12 @@ const BASE: Record<Part, string> = {
 const FULL_SCREEN: Partial<Record<Part, string>> = {
   overlay: `padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);background:${COLORS.surface}`,
   dialog: `max-width:none;max-height:none;border-radius:0;box-shadow:none`,
+};
+
+/** In a frame narrower than `NARROW_BELOW`, the SignPage's column is narrower too. */
+const NARROW: Partial<Record<Part, string>> = {
+  canvas: inset(COLUMN.inset[1]),
+  page: `margin-top:${PAGE_MARGIN(COLUMN.gap[1])}px`,
 };
 
 /**
@@ -107,6 +164,7 @@ export const CSS =
   `.close:focus-visible{outline:2px solid ${COLORS.focus};outline-offset:2px}` +
   `@keyframes connie-shimmer{from{background-position:100% 0}to{background-position:-100% 0}}` +
   `@media (max-width:639.98px){${rules(FULL_SCREEN)}}` +
+  `@container (max-width:${NARROW_BELOW - 0.02}px){${rules(NARROW)}}` +
   `@media (prefers-reduced-motion:reduce){.bar{animation:none}.frame,.skeleton{transition:none}}`;
 
 function apply(el: HTMLElement, decls: string): void {
@@ -141,7 +199,8 @@ export interface Styler {
   /**
    * Creates an element with the classes of its parts. Without an adopted
    * stylesheet, the same declarations go on `element.style`, full screen at
-   * every width, with no hover, shimmer or line widths.
+   * every width, with the narrow column when the window is narrow, and with
+   * no hover, shimmer or line widths.
    */
   part<K extends keyof HTMLElementTagNameMap>(tag: K, ...names: Part[]): HTMLElementTagNameMap[K];
   /** Adds a state class, `shown` or `faded`, to an element made by `part`. */
@@ -158,8 +217,13 @@ export function shadow(doc: Document): { host: HTMLElement; root: ShadowRoot; st
   apply(host, HOST);
   const root = host.attachShadow({ mode: "closed" });
   const sheet = adopt(root);
+  // Inline, the dialog is full screen at every width, so the frame is as wide as the window.
+  const narrow = (doc.defaultView?.innerWidth ?? 0) < NARROW_BELOW;
   const style = (el: HTMLElement, name: Part): void => {
-    if (!sheet) apply(el, BASE[name] + (FULL_SCREEN[name] ? ";" + FULL_SCREEN[name] : ""));
+    if (sheet) return;
+    apply(el, BASE[name]);
+    if (FULL_SCREEN[name]) apply(el, FULL_SCREEN[name]);
+    if (narrow && NARROW[name]) apply(el, NARROW[name]);
   };
   return {
     host,

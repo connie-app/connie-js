@@ -220,21 +220,22 @@ describe("the close button", () => {
 });
 
 describe("the skeleton", () => {
-  it("is a hidden placeholder of the SignPage: a header band with a title bar, then a paper column", () => {
+  it("is a hidden placeholder of the SignPage: a header band with a title bar, then the title, subtitle and paper on the canvas", () => {
     const { skeleton, dialog } = open();
     const el = skeleton()!;
     expect(el.parentNode).toBe(dialog);
     expect(el.getAttribute("aria-hidden")).toBe("true");
-    const [head, page] = Array.from(el.children);
+    const [head, canvas] = Array.from(el.children);
     expect(head.className).toBe("head");
     expect(Array.from(head.children, (c) => c.className)).toEqual(["bar title"]);
-    expect(page.className).toBe("page");
+    expect(canvas.className).toBe("canvas");
+    expect(Array.from(canvas.children, (c) => c.className)).toEqual(["bar h1", "bar h2", "page"]);
+    const page = canvas.lastElementChild!;
     const lines = Array.from(page.children).filter((c) => c.className === "bar line");
     expect(page.firstElementChild!.className).toBe("bar heading");
     expect(lines.length).toBeGreaterThanOrEqual(8);
     expect(lines.length).toBeLessThanOrEqual(10);
     expect(getComputedStyle(head).height).toBe("56px");
-    expect(getComputedStyle(page).maxWidth).toBe("640px");
   });
 
   it("matches the frame's header band and colours, and shimmers", () => {
@@ -243,12 +244,31 @@ describe("the skeleton", () => {
     );
     expect(CSS).toMatch(/\.head\{[^}]*background:#ffffff/);
     expect(CSS).toMatch(/\.skeleton\{[^}]*background:#e2e8f0/);
-    expect(CSS).toMatch(
-      /\.page\{[^}]*max-width:640px;margin:24px auto 0;[^}]*border-radius:8px;background:#ffffff/,
-    );
     expect(CSS).toMatch(/\.title\{width:40%/);
     expect(CSS).toMatch(/\.bar\{[^}]*#ebebeb[^}]*animation:connie-shimmer/);
+    expect(CSS).toMatch(/\.h1\{[^}]*#cbd5e1/);
+    expect(CSS).toMatch(/\.h2\{[^}]*#cbd5e1/);
     expect(CSS).toContain("@keyframes connie-shimmer");
+  });
+
+  it("lays the paper out where the SignPage's own sits, so nothing moves on ready", () => {
+    // The column: 48px above the title and 24px either side of the paper, the
+    // title's 32px line and the subtitle's 28px line 8px apart, then 48px to
+    // the paper, which is square with 96px by 48px of padding.
+    expect(CSS).toMatch(/\.canvas\{[^}]*padding:48px 24px 0;/);
+    expect(CSS).toMatch(/\.canvas\{[^}]*scrollbar-gutter:stable/);
+    expect(CSS).toMatch(/\.h1\{[^}]*height:24px;margin:4px auto 0;/);
+    expect(CSS).toMatch(/\.h2\{[^}]*height:18px;margin:17px auto 0;/);
+    expect(CSS).toMatch(
+      /\.page\{max-width:848px;[^}]*margin:53px auto 0;padding:96px 48px 0;[^}]*border-radius:0;background:#ffffff;box-shadow:/,
+    );
+  });
+
+  it("narrows the column with the frame, not the host page, below 640px", () => {
+    expect(CSS).toMatch(/\.skeleton\{[^}]*container-type:inline-size/);
+    expect(CSS).toContain(
+      "@container (max-width:639.98px){.canvas{padding:32px 16px 0}.page{margin-top:37px}}",
+    );
   });
 
   it("stops shimmering and fading under prefers-reduced-motion", () => {

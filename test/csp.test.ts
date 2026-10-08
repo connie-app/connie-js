@@ -124,6 +124,26 @@ describe("without constructable stylesheets", () => {
     embed.close();
   });
 
+  it("lays out the skeleton's column for the window's width, wide or narrow", async () => {
+    const { openSignPage } = await import("../src/v1/embed.js");
+    const column = () => {
+      const embed = openSignPage({ url: "https://sign.page/embed/x" });
+      const root = rootOf(hosts().at(-1)!);
+      const canvas = root.querySelector<HTMLElement>(".canvas")!;
+      const page = root.querySelector<HTMLElement>(".page")!;
+      const result = [
+        canvas.style.getPropertyValue("padding"),
+        page.style.getPropertyValue("margin-top"),
+      ];
+      embed.close();
+      return result;
+    };
+    vi.stubGlobal("innerWidth", 1024);
+    expect(column()).toEqual(["48px 24px 0px", "53px"]);
+    vi.stubGlobal("innerWidth", 390);
+    expect(column()).toEqual(["32px 16px 0px", "37px"]);
+  });
+
   it("still cross-fades from the skeleton to the frame inline", async () => {
     vi.useFakeTimers();
     const { openSignPage } = await import("../src/v1/embed.js");

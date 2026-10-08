@@ -18,7 +18,10 @@ All notable changes to `@getconnie/connie-js` and the hosted script at
   leaves empty when connie-js frames it.
 - A skeleton of the SignPage replaces the spinner while it loads, and
   cross-fades to the SignPage over 200ms on `ready`, or swaps at once under
-  `prefers-reduced-motion`.
+  `prefers-reduced-motion`. It has the SignPage's layout, so nothing moves in
+  the swap: the title and subtitle on the canvas and the paper in the same
+  place and size, narrowing with the frame below 640px and leaving room for a
+  scrollbar where the SignPage gets one.
 - The dialog's height follows `100dvh` (falling back to `100vh`), so mobile
   browser bars do not hide its bottom, and full screen on phones keeps clear of
   safe-area insets.

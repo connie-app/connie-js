@@ -55,8 +55,12 @@ right edges, so it sits centred in the empty end of the header band, with a
 exactly as `embed.close()` does.
 
 **Loading.** Until the SignPage says it is `ready`, a skeleton of it covers the
-frame: the header band with a placeholder title, and a document sheet with
-placeholder lines. On `ready` the frame fades in under the skeleton as the
+frame, laid out as the SignPage is so nothing moves when it appears: the header
+band with a placeholder title, then on the canvas the SignPage's title and
+subtitle, and the document's paper with placeholder lines. The paper sits where
+the SignPage's own does, by the frame's width rather than the page's: 24px from
+the sides below a 48px top margin, or 16px and 32px when the frame is narrower
+than 640px. On `ready` the frame fades in under the skeleton as the
 skeleton fades out, over 200ms, or at once when the signer prefers reduced
 motion. The dialog is `aria-busy` until then.
 

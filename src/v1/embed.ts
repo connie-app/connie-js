@@ -100,20 +100,24 @@ function reducedMotion(): boolean {
 }
 
 /**
- * A placeholder of the SignPage, shown until `ready`: the frame's header band
- * with a title bar, then a document column with a heading and lines of text.
+ * A placeholder of the SignPage, shown until `ready`, laid out as the SignPage
+ * is so nothing moves when it fades in: the frame's header band with a title
+ * bar, then on the canvas the SignPage's title and subtitle, and the paper
+ * with a heading and lines of text.
  */
 function skeleton(styler: Styler): HTMLElement {
   const loading = styler.part("div", "skeleton");
   loading.setAttribute("aria-hidden", "true");
   const head = styler.part("div", "head");
   head.append(styler.part("div", "bar", "title"));
+  const canvas = styler.part("div", "canvas");
   const page = styler.part("div", "page");
   page.append(
     styler.part("div", "bar", "heading"),
     ...LINE_WIDTHS.map(() => styler.part("div", "bar", "line")),
   );
-  loading.append(head, page);
+  canvas.append(styler.part("div", "bar", "h1"), styler.part("div", "bar", "h2"), page);
+  loading.append(head, canvas);
   return loading;
 }
 
