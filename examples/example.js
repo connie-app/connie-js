@@ -1,6 +1,9 @@
 const input = document.getElementById("url");
 const log = document.getElementById("log");
-input.value = `${location.protocol}//127.0.0.1:${location.port}/examples/mock-frame.html`;
+const query = new URLSearchParams(location.search);
+input.value = `${location.protocol}//127.0.0.1:${location.port}/examples/mock-frame.html?ready_after=${
+  query.get("ready_after") || 1500
+}`;
 
 const record = (label, text) => (detail) => {
   const item = document.createElement("li");
@@ -32,3 +35,15 @@ document.getElementById("open-two").addEventListener("click", () => {
   Connie.openSignPage({ url: input.value, ...callbacks("first") });
   Connie.openSignPage({ url: input.value, ...callbacks("second") });
 });
+
+// ?hostile loads a stylesheet with the rules an aggressive host page might
+// ship, and opens a SignPage at once, since it hides this page's own buttons.
+if (query.has("hostile")) {
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = "hostile.css";
+  link.addEventListener("load", () => {
+    Connie.openSignPage({ url: input.value, ...callbacks("hostile") });
+  });
+  document.head.append(link);
+}

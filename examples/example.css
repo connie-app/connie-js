@@ -35,12 +35,56 @@ button {
   color: #64748b;
 }
 
+/*
+ * The mock SignPage keeps to the frame's side of the contract: its first 56px
+ * are a fixed, non-scrolling header band (white, 1px #e5e5e5 bottom border
+ * inside the 56px) with the title on the left and 16px side padding. It never
+ * draws a close button, and when connie-js frames it (embed_id is set) it
+ * leaves the band's right 56px empty for connie-js's. Below the band, the
+ * document is a white sheet on a #e2e8f0 canvas.
+ */
 .mock {
-  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #e2e8f0;
 }
 
-.mock header {
+.mock .band {
+  flex: none;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  height: 56px;
+  padding: 0 16px;
+  box-sizing: border-box;
+  border-bottom: 1px solid #e5e5e5;
+  background: #ffffff;
+}
+
+.mock.framed .band {
+  padding-right: 72px;
+}
+
+.mock .band h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mock .document {
+  flex: 1;
+  overflow: auto;
+  padding: 24px 16px;
+}
+
+.mock .paper {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 40px 32px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: #ffffff;
 }

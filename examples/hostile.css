@@ -1,0 +1,47 @@
+/*
+ * Loaded by the example page with ?hostile: rules an aggressive host page
+ * might ship. None of them may change connie-js's overlay.
+ */
+* {
+  all: unset;
+}
+
+html,
+body {
+  display: block;
+  font:
+    900 22px/3 "Comic Sans MS",
+    cursive !important;
+  color: #ff00aa !important;
+}
+
+div {
+  background: lime !important;
+  padding: 40px !important;
+  transform: rotate(2deg) !important;
+  border: 6px dashed red !important;
+}
+
+button {
+  display: none !important;
+}
+
+iframe {
+  display: none !important;
+  opacity: 0.2 !important;
+}
+
+svg,
+path {
+  fill: red !important;
+  stroke: lime !important;
+  width: 80px !important;
+}
+
+[role="dialog"],
+.overlay,
+.dialog,
+.close,
+.skeleton {
+  display: none !important;
+}
