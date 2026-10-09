@@ -1,11 +1,16 @@
 import type { ConnieEmbedError, OpenSignPageOptions, SignPageEmbed } from "../types.js";
-import { part } from "./styles.js";
+import { FADE_MS, LINE_WIDTHS, shadow, type Styler } from "./styles.js";
 import { parseAllowedUrl, randomId, withEmbedId } from "./url.js";
 
 const FALLBACK_LABEL = "SignPage";
+const SVG = "http://www.w3.org/2000/svg";
+/** The path of the eID handoff, the only page the frame may send the host page to. */
+const HANDOFF_PATH = "/openid/authorize/";
 
 interface OpenEmbed {
-  overlay: HTMLElement;
+  /** The shadow host on `document.body`; everything else is inside its closed root. */
+  host: HTMLElement;
+  root: ShadowRoot;
   frame: HTMLIFrameElement;
   close(): void;
 }
@@ -26,9 +31,19 @@ function call<A extends unknown[]>(fn: ((...args: A) => void) | undefined, ...ar
   }
 }
 
-/** Sets inline properties through CSSOM and returns a function that puts the previous values back. */
+/**
+ * Sets inline properties through CSSOM and returns a function that puts the
+ * previous values of those properties back, leaving any other inline style
+ * the page set meanwhile alone. An element that had no `style` attribute is
+ * left without one, unless the page added declarations of its own.
+ *
+ * Engines serialise inline styles into the attribute lazily, so a
+ * `removeAttribute("style")` straight after `removeProperty` acts on a stale
+ * attribute and the pending serialisation writes `style=""` back. Reading
+ * the attribute first brings it up to date, and the removal then holds.
+ */
 function setStyles(el: HTMLElement, props: Record<string, string>): () => void {
-  const hadAttribute = el.hasAttribute("style");
+  const original = el.getAttribute("style");
   const previous = Object.keys(props).map(
     (k) => [k, el.style.getPropertyValue(k), el.style.getPropertyPriority(k)] as const,
   );
@@ -38,7 +53,7 @@ function setStyles(el: HTMLElement, props: Record<string, string>): () => void {
       if (v) el.style.setProperty(k, v, priority);
       else el.style.removeProperty(k);
     }
-    if (!hadAttribute && !el.style.length) el.removeAttribute("style");
+    if (original === null && el.getAttribute("style") === "") el.removeAttribute("style");
   };
 }
 
@@ -58,6 +73,12 @@ function lockScroll(doc: Document): () => void {
   };
 }
 
+/**
+ * Esc reaches this listener only while focus is on the host page or on
+ * connie-js's close button. While focus is inside the iframe, the keystroke
+ * belongs to the frame, which closes its own popovers first and otherwise
+ * forwards Esc as a `close` message.
+ */
 function onKeydown(event: KeyboardEvent): void {
   const top = stack[stack.length - 1];
   if (top && event.key === "Escape") {
@@ -69,7 +90,9 @@ function onKeydown(event: KeyboardEvent): void {
 
 function onFocusin(event: FocusEvent): void {
   const top = stack[stack.length - 1];
-  if (top && !top.overlay.contains(event.target as Node)) top.frame.focus();
+  // Browsers retarget focus inside the shadow root to its host at the document.
+  const target = event.target as Node;
+  if (top && target !== top.host && !top.root.contains(target)) top.frame.focus();
 }
 
 function listen(doc: Document, on: boolean): void {
@@ -82,6 +105,75 @@ function listen(doc: Document, on: boolean): void {
     doc.removeEventListener("keydown", onKeydown, true);
     doc.removeEventListener("focusin", onFocusin, true);
   }
+}
+
+/**
+ * Whether the overlay can go in the top layer, as a modal `<dialog>`: above
+ * every `z-index`, sized by the viewport whatever transform, filter or
+ * containment its ancestors carry, with the rest of the page inert.
+ */
+function hasTopLayer(): boolean {
+  return (
+    typeof HTMLDialogElement === "function" &&
+    typeof HTMLDialogElement.prototype.showModal === "function"
+  );
+}
+
+function reducedMotion(): boolean {
+  return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/**
+ * A placeholder of the SignPage, shown until `ready`, laid out as the SignPage
+ * is so nothing moves when it fades in: the frame's header band with a title
+ * bar, then on the canvas the SignPage's title and subtitle, and the paper
+ * with a heading and lines of text.
+ */
+function skeleton(styler: Styler): HTMLElement {
+  const loading = styler.part("div", "skeleton");
+  loading.setAttribute("aria-hidden", "true");
+  const head = styler.part("div", "head");
+  head.append(styler.part("div", "bar", "title"));
+  const canvas = styler.part("div", "canvas");
+  const page = styler.part("div", "page");
+  page.append(
+    styler.part("div", "bar", "heading"),
+    ...LINE_WIDTHS.map(() => styler.part("div", "bar", "line")),
+  );
+  canvas.append(styler.part("div", "bar", "h1"), styler.part("div", "bar", "h2"), page);
+  loading.append(head, canvas);
+  return loading;
+}
+
+/**
+ * The modal's one close button, shown from open to teardown at the same
+ * place: 40×40, 8px from the dialog's top and right edges, centred in the
+ * right 56px of the frame's header band, which the frame leaves empty when
+ * connie-js frames it.
+ */
+function closeButtonOf(doc: Document, styler: Styler): HTMLButtonElement {
+  const button = styler.part("button", "close");
+  button.type = "button";
+  button.setAttribute("aria-label", "Close");
+  const icon = doc.createElementNS(SVG, "svg");
+  for (const [k, v] of [
+    ["width", "20"],
+    ["height", "20"],
+    ["viewBox", "0 0 24 24"],
+    ["fill", "none"],
+    ["stroke", "currentColor"],
+    ["stroke-width", "2"],
+    ["stroke-linecap", "round"],
+    ["stroke-linejoin", "round"],
+    ["aria-hidden", "true"],
+  ]) {
+    icon.setAttribute(k, v);
+  }
+  const path = doc.createElementNS(SVG, "path");
+  path.setAttribute("d", "M18 6 6 18M6 6l12 12");
+  icon.append(path);
+  button.append(icon);
+  return button;
 }
 
 function toError(payload: Record<string, unknown>): ConnieEmbedError {
@@ -123,28 +215,38 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
   let readyFired = false;
   let signedFired = false;
 
-  const overlay = part(doc, "div", "overlay");
-  const dialog = part(doc, "div", "dialog");
-  dialog.setAttribute("role", "dialog");
-  dialog.setAttribute("aria-modal", "true");
-  dialog.setAttribute("aria-label", FALLBACK_LABEL);
-  dialog.setAttribute("aria-busy", "true");
+  const { host, root, styler } = shadow(doc);
+  // The top layer's `<dialog>` is the modal dialog to assistive technology,
+  // with its native role and modality. Without one, the panel takes the role.
+  const modal = hasTopLayer() ? styler.part("dialog", "top") : null;
+  const overlay = styler.part("div", "overlay");
+  const dialog = styler.part("div", "dialog");
+  const named: HTMLElement = modal || dialog;
+  if (!modal) {
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+  }
+  named.setAttribute("aria-label", FALLBACK_LABEL);
+  named.setAttribute("aria-busy", "true");
 
-  const frame = part(doc, "iframe", "frame");
+  // The iframe sits under the skeleton from the start, invisible until `ready`.
+  const frame = styler.part("iframe", "frame");
   frame.title = FALLBACK_LABEL;
   frame.setAttribute("allow", "camera");
+  // The SignPage learns which site embeds it, never the page's path or query.
+  frame.referrerPolicy = "strict-origin";
 
-  const loading = part(doc, "div", "loading");
-  loading.setAttribute("aria-hidden", "true");
-  loading.append(part(doc, "div", "spinner"));
-
-  const closeButton = part(doc, "button", "close");
-  closeButton.type = "button";
-  closeButton.setAttribute("aria-label", "Close");
-  closeButton.textContent = "×";
+  const loading = skeleton(styler);
+  const closeButton = closeButtonOf(doc, styler);
 
   dialog.append(frame, loading, closeButton);
   overlay.append(dialog);
+  if (modal) {
+    modal.append(overlay);
+    root.append(modal);
+  } else {
+    root.append(overlay);
+  }
 
   const finish = (callback?: () => void): void => {
     if (closed) return;
@@ -152,7 +254,7 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
     window.removeEventListener("message", onMessage);
     const wasTop = stack[stack.length - 1] === embed;
     stack.splice(stack.indexOf(embed), 1);
-    overlay.remove();
+    host.remove();
     if (!stack.length) {
       listen(doc, false);
       unlockScroll?.();
@@ -161,7 +263,9 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
     if (wasTop) {
       const next = stack[stack.length - 1];
       if (next) next.frame.focus();
-      else if (returnFocus?.isConnected) (returnFocus as HTMLElement).focus?.();
+      // The page is where the signer left it, so giving focus back does not scroll it.
+      else if (returnFocus?.isConnected)
+        (returnFocus as HTMLElement).focus?.({ preventScroll: true });
     }
     call(callback);
     call(options.onClose);
@@ -176,14 +280,18 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
   const ready = (title: unknown): void => {
     if (typeof title === "string" && title.trim()) {
       const label = title.trim().slice(0, 200);
-      dialog.setAttribute("aria-label", label);
+      named.setAttribute("aria-label", label);
       frame.title = label;
     }
-    if (loading.isConnected) {
-      if (doc.activeElement === closeButton) frame.focus();
-      loading.remove();
-      closeButton.remove();
-      dialog.removeAttribute("aria-busy");
+    if (named.hasAttribute("aria-busy")) {
+      named.removeAttribute("aria-busy");
+      styler.mark(frame, "shown");
+      if (reducedMotion()) {
+        loading.remove();
+      } else {
+        styler.mark(loading, "faded");
+        setTimeout(() => loading.remove(), FADE_MS);
+      }
     }
     if (!readyFired) {
       readyFired = true;
@@ -229,8 +337,12 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
         fail(toError(payload));
         break;
       case "navigate": {
+        // The one navigation the frame may ask for: the eID handoff, which
+        // cannot run framed. Anything else is ignored.
         const target = parseAllowedUrl(payload.url);
-        if (target && target.origin === frameOrigin) window.location.assign(target.href);
+        if (target && target.origin === frameOrigin && target.pathname.startsWith(HANDOFF_PATH)) {
+          window.location.assign(target.href);
+        }
         break;
       }
     }
@@ -238,17 +350,34 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
 
   const start = (sessionUrl: URL): void => {
     frameOrigin = sessionUrl.origin;
+    // WebKit applies an iframe's referrerpolicy only to the src it has when it
+    // is inserted, so the frame goes back in place carrying its src.
+    const focused = root.activeElement === frame;
+    frame.remove();
     frame.src = withEmbedId(sessionUrl, embedId);
+    dialog.prepend(frame);
+    if (focused) frame.focus();
   };
 
   closeButton.addEventListener("click", () => finish());
-  const embed: OpenEmbed = { overlay, frame, close: () => finish() };
+  if (modal) {
+    // A close request the keydown listener did not take first, such as
+    // Android's back gesture, closes through the same path. Esc inside the
+    // frame never reaches the dialog: the frame's document has its own.
+    modal.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      finish();
+    });
+    modal.addEventListener("close", () => finish());
+  }
+  const embed: OpenEmbed = { host, root, frame, close: () => finish() };
 
   stack.push(embed);
   if (!unlockScroll) unlockScroll = lockScroll(doc);
   listen(doc, true);
   window.addEventListener("message", onMessage);
-  doc.body.append(overlay);
+  doc.body.append(host);
+  modal?.showModal();
   frame.focus();
 
   if (initial) {

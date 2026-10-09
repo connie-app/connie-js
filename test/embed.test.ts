@@ -1,7 +1,15 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openSignPage } from "../src/v1/embed.js";
 import { CSS } from "../src/v1/styles.js";
-import { FRAME_ORIGIN, SESSION_URL, flush, open, overlays, stubFrameWindow } from "./helpers.js";
+import {
+  FRAME_ORIGIN,
+  SESSION_URL,
+  flush,
+  frameOf,
+  hosts,
+  open,
+  stubFrameWindow,
+} from "./helpers.js";
 
 describe("options", () => {
   it("throws without options", () => {
@@ -28,7 +36,7 @@ describe("options", () => {
       /must be an https URL/,
     );
     expect(() => openSignPage({ url: "javascript:alert(1)" })).toThrow(TypeError);
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
     expect(onError).not.toHaveBeenCalled();
   });
 
@@ -61,64 +69,331 @@ describe("the iframe", () => {
     expect(frame.hasAttribute("sandbox")).toBe(false);
     expect(frame.title).toBe("SignPage");
   });
+
+  it("sends only the host page's origin as the referrer", () => {
+    const { frame } = open();
+    expect(frame.referrerPolicy).toBe("strict-origin");
+    expect(frame.getAttribute("referrerpolicy")).toBe("strict-origin");
+  });
+
+  it.each([
+    ["url", () => open()],
+    ["fetchUrl", () => open({ fetchUrl: () => Promise.resolve(SESSION_URL) })],
+  ])(
+    "is inserted with its src already set, which WebKit needs to apply the policy (%s)",
+    async (_name, opener) => {
+      const proto = HTMLIFrameElement.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(proto, "src")!;
+      const connectedOnSet: boolean[] = [];
+      Object.defineProperty(proto, "src", {
+        ...descriptor,
+        set(this: HTMLIFrameElement, value: string) {
+          connectedOnSet.push(this.isConnected);
+          descriptor.set!.call(this, value);
+        },
+      });
+      try {
+        const { frame, dialog, root } = opener();
+        await flush();
+        expect(frame.src).toMatch(/^https:\/\/sign\.page\/embed\/cs_test_123\?embed_id=/);
+        expect(connectedOnSet).toEqual([false]);
+        expect(dialog.firstElementChild).toBe(frame);
+        expect(root.activeElement).toBe(frame);
+      } finally {
+        Object.defineProperty(proto, "src", descriptor);
+      }
+    },
+  );
 });
 
 describe("the overlay", () => {
-  it("is a modal dialog with a fallback label, busy until ready", () => {
-    const { dialog } = open();
-    expect(dialog.getAttribute("role")).toBe("dialog");
-    expect(dialog.getAttribute("aria-modal")).toBe("true");
-    expect(dialog.getAttribute("aria-label")).toBe("SignPage");
-    expect(dialog.getAttribute("aria-busy")).toBe("true");
+  it("is a native modal dialog with a fallback label, busy until ready, and no second dialog role inside", () => {
+    const { modal, dialog, root } = open();
+    expect(modal.tagName).toBe("DIALOG");
+    expect((modal as HTMLDialogElement).open).toBe(true);
+    expect(modal.hasAttribute("role")).toBe(false);
+    expect(modal.getAttribute("aria-label")).toBe("SignPage");
+    expect(modal.getAttribute("aria-busy")).toBe("true");
+    expect(dialog.hasAttribute("role")).toBe(false);
+    expect(dialog.hasAttribute("aria-modal")).toBe(false);
+    expect(root.querySelectorAll('dialog, [role="dialog"], [aria-modal]')).toHaveLength(1);
   });
 
-  it("uses namespaced class names only", () => {
-    const { overlay } = open();
-    const classes = [overlay, ...overlay.querySelectorAll("*")].map((el) => el.className);
-    expect(classes).toEqual([
-      "connie-js-overlay",
-      "connie-js-dialog",
-      "connie-js-frame",
-      "connie-js-loading",
-      "connie-js-spinner",
-      "connie-js-close",
+  it("lives in a closed shadow root on a single host appended to body", () => {
+    const { host, root, modal, dialog, frame } = open();
+    expect(host.parentNode).toBe(document.body);
+    expect(host.tagName).toBe("DIV");
+    expect(host.shadowRoot).toBeNull();
+    expect(root.mode).toBe("closed");
+    expect(host.childNodes).toHaveLength(0);
+    expect(modal.parentNode).toBe(root);
+    expect(dialog.getRootNode()).toBe(root);
+    expect(frame.getRootNode()).toBe(root);
+    expect(document.querySelector("dialog, iframe, [role=dialog], button")).toBeNull();
+  });
+
+  it("opens the dialog with showModal, after the host is on the page, so it is in the top layer", () => {
+    const showModal = vi.spyOn(HTMLDialogElement.prototype, "showModal");
+    const show = vi.spyOn(HTMLDialogElement.prototype, "show");
+    let connected = false;
+    showModal.mockImplementation(function (this: HTMLDialogElement) {
+      connected = this.isConnected;
+      this.setAttribute("open", "");
+    });
+    const { modal } = open();
+    expect(showModal).toHaveBeenCalledOnce();
+    expect(showModal.mock.contexts[0]).toBe(modal);
+    expect(connected).toBe(true);
+    expect(show).not.toHaveBeenCalled();
+  });
+
+  it("styles the dialog to fill the viewport with no box of its own, and a transparent backdrop under its own", () => {
+    const { modal, overlay } = open();
+    expect(overlay.parentNode).toBe(modal);
+    expect(CSS).toMatch(
+      /\.top\{all:initial;display:block;position:fixed;inset:0;width:100%;height:100vh;height:100dvh;max-width:none;max-height:none;margin:0;padding:0;border:0;overflow:visible;background:transparent;outline:0\}/,
+    );
+    expect(CSS).toContain(".top::backdrop{background:transparent}");
+    expect(CSS).toMatch(
+      /\.overlay\{position:absolute;inset:0;[^}]*background:rgba\(15,23,42,\.6\)/,
+    );
+    const style = getComputedStyle(modal);
+    expect([style.position, style.display, style.maxWidth, style.margin]).toEqual([
+      "fixed",
+      "block",
+      "none",
+      "0px",
     ]);
   });
 
-  it("styles itself with an adopted stylesheet: top z-index, spinner keyframes, full screen below 640px", () => {
-    open();
-    const sheet = document.adoptedStyleSheets.at(-1)!;
-    const text = Array.from(sheet.cssRules, (r) => r.cssText).join("\n");
-    expect(CSS).toContain("z-index:2147483000");
-    expect(text).toContain("2147483000");
-    expect(CSS).toContain("@keyframes connie-js-spin");
-    expect(CSS).toMatch(
-      /@media \(max-width:639\.98px\)\{\.connie-js-overlay\{padding:0!important\}\.connie-js-dialog\{max-width:none!important;max-height:none!important;border-radius:0!important/,
+  it("gives the host all: initial and a fixed full-viewport box, inline and !important", () => {
+    const { host } = open();
+    const prop = (name: string) => [
+      host.style.getPropertyValue(name),
+      host.style.getPropertyPriority(name),
+    ];
+    expect(prop("position")).toEqual(["fixed", "important"]);
+    expect(prop("display")).toEqual(["block", "important"]);
+    expect(prop("z-index")).toEqual(["2147483000", "important"]);
+    expect(prop("top")).toEqual(["0px", "important"]);
+    expect(prop("left")).toEqual(["0px", "important"]);
+    expect(prop("right")).toEqual(["0px", "important"]);
+    expect(host.style.getPropertyValue("all")).toBe("initial");
+    expect(host.style.getPropertyPriority("all")).toBe("important");
+  });
+
+  it("styles the inside with one shared adopted stylesheet, never the document's", () => {
+    const before = document.adoptedStyleSheets.length;
+    const a = open();
+    const b = open();
+    expect(document.adoptedStyleSheets.length).toBe(before);
+    expect(a.root.adoptedStyleSheets).toHaveLength(1);
+    expect(a.root.adoptedStyleSheets[0]).toBe(b.root.adoptedStyleSheets[0]);
+    const text = Array.from(a.root.adoptedStyleSheets[0].cssRules, (r) => r.cssText).join("\n");
+    expect(text).toContain("connie-shimmer");
+  });
+
+  it("has a 760 × 900 panel, 12px radius, white, and full screen with safe-area insets below 640px", () => {
+    expect(CSS).toMatch(/\.dialog\{[^}]*max-width:760px;[^}]*max-height:900px;/);
+    expect(CSS).toMatch(/\.dialog\{[^}]*background:#ffffff;border-radius:12px/);
+    expect(CSS).toMatch(/\.overlay\{[^}]*padding:24px;/);
+    expect(CSS).toContain(
+      "@media (max-width:639.98px){.overlay{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);background:#ffffff}.dialog{max-width:none;max-height:none;border-radius:0;box-shadow:none}}",
     );
   });
 
-  it("adopts the stylesheet once however many embeds open", () => {
-    open();
-    const count = document.adoptedStyleSheets.length;
-    open();
-    open();
-    expect(document.adoptedStyleSheets.length).toBe(count);
+  it("is laid out in the dialog's own computed styles, out of reach of hostile page styles", () => {
+    const hostile = new CSSStyleSheet();
+    hostile.replaceSync(
+      "*{all:unset}button{display:none!important}iframe{display:none!important;opacity:.1!important}div{display:none!important}",
+    );
+    document.adoptedStyleSheets = [hostile];
+    try {
+      const { host, dialog, frame, closeButton } = open();
+      expect(getComputedStyle(dialog).maxWidth).toBe("760px");
+      expect(getComputedStyle(dialog).borderRadius).toBe("12px");
+      expect(getComputedStyle(closeButton).display).toBe("flex");
+      expect(getComputedStyle(closeButton).width).toBe("40px");
+      expect(getComputedStyle(frame).display).toBe("block");
+      expect(getComputedStyle(frame).opacity).toBe("0");
+      expect(getComputedStyle(host).position).toBe("fixed");
+      expect(getComputedStyle(host).display).toBe("block");
+    } finally {
+      document.adoptedStyleSheets = [];
+    }
+  });
+});
+
+describe("the close button", () => {
+  it("is a labelled button with an SVG X drawn through the DOM", () => {
+    const { closeButton } = open();
+    expect(closeButton.type).toBe("button");
+    expect(closeButton.getAttribute("aria-label")).toBe("Close");
+    expect(closeButton.textContent).toBe("");
+    const svg = closeButton.firstElementChild!;
+    expect(svg.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    expect(svg.getAttribute("width")).toBe("20");
+    expect(svg.getAttribute("height")).toBe("20");
+    expect(svg.getAttribute("aria-hidden")).toBe("true");
+    expect(svg.getAttribute("stroke")).toBe("currentColor");
+    expect(svg.querySelector("path")!.getAttribute("d")).toBe("M18 6 6 18M6 6l12 12");
   });
 
-  it("shows a spinner and a close button until ready", () => {
-    const { overlay } = open();
-    expect(overlay.querySelector(".connie-js-spinner")).not.toBeNull();
-    const close = overlay.querySelector<HTMLButtonElement>(".connie-js-close")!;
-    expect(close.type).toBe("button");
-    expect(close.getAttribute("aria-label")).toBe("Close");
+  it("is 40 × 40 at 8px from the dialog's top and right, above the frame, in Connie's colours", () => {
+    const { closeButton, frame } = open();
+    const style = getComputedStyle(closeButton);
+    expect([style.position, style.top, style.right, style.width, style.height]).toEqual([
+      "absolute",
+      "8px",
+      "8px",
+      "40px",
+      "40px",
+    ]);
+    expect(style.borderRadius).toBe("8px");
+    expect(Number(style.zIndex)).toBeGreaterThan(Number(getComputedStyle(frame).zIndex));
+    expect(CSS).toMatch(/\.close\{[^}]*color:#525252/);
+    expect(CSS).toContain(".close:hover{background:#f5f5f5}");
+    expect(CSS).toContain(".close:focus-visible{outline:2px solid #9e36ff;outline-offset:2px}");
   });
 
-  it("closes from its own close button before ready", () => {
+  it("is the same element, in the same place, from open to teardown", () => {
+    const h = open();
+    const place = () => {
+      const style = getComputedStyle(h.closeButton);
+      return [style.position, style.top, style.right, style.zIndex];
+    };
+    const buttons = () => Array.from(h.root.querySelectorAll("button"));
+    const before = place();
+    expect(buttons()).toEqual([h.closeButton]);
+    h.post("ready", { title: "Data processing addendum" });
+    expect(buttons()).toEqual([h.closeButton]);
+    expect(h.closeButton.parentNode).toBe(h.dialog);
+    expect(place()).toEqual(before);
+    h.post("signed");
+    expect(buttons()).toEqual([h.closeButton]);
+    expect(place()).toEqual(before);
+  });
+
+  it("tears down and calls onClose once, before ready", () => {
     const onClose = vi.fn();
-    const { overlay } = open({ onClose });
-    overlay.querySelector<HTMLButtonElement>(".connie-js-close")!.click();
-    expect(overlays()).toHaveLength(0);
+    const { closeButton } = open({ onClose });
+    closeButton.click();
+    closeButton.click();
+    expect(hosts()).toHaveLength(0);
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("tears down and calls onClose once, after ready", () => {
+    const onClose = vi.fn();
+    const { closeButton, post } = open({ onClose });
+    post("ready", { title: "T" });
+    closeButton.click();
+    expect(hosts()).toHaveLength(0);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the skeleton", () => {
+  it("is a hidden placeholder of the SignPage: a header band with a title bar, then the title, subtitle and paper on the canvas", () => {
+    const { skeleton, dialog } = open();
+    const el = skeleton()!;
+    expect(el.parentNode).toBe(dialog);
+    expect(el.getAttribute("aria-hidden")).toBe("true");
+    const [head, canvas] = Array.from(el.children);
+    expect(head.className).toBe("head");
+    expect(Array.from(head.children, (c) => c.className)).toEqual(["bar title"]);
+    expect(canvas.className).toBe("canvas");
+    expect(Array.from(canvas.children, (c) => c.className)).toEqual(["bar h1", "bar h2", "page"]);
+    const page = canvas.lastElementChild!;
+    const lines = Array.from(page.children).filter((c) => c.className === "bar line");
+    expect(page.firstElementChild!.className).toBe("bar heading");
+    expect(lines.length).toBeGreaterThanOrEqual(8);
+    expect(lines.length).toBeLessThanOrEqual(10);
+    expect(getComputedStyle(head).height).toBe("56px");
+  });
+
+  it("matches the frame's header band and colours, and shimmers", () => {
+    expect(CSS).toMatch(
+      /\.head\{[^}]*height:56px;padding:0 72px 0 16px;[^}]*border-bottom:1px solid #e5e5e5/,
+    );
+    expect(CSS).toMatch(/\.head\{[^}]*background:#ffffff/);
+    expect(CSS).toMatch(/\.skeleton\{[^}]*background:#e2e8f0/);
+    expect(CSS).toMatch(/\.title\{width:40%/);
+    expect(CSS).toMatch(/\.bar\{[^}]*#ebebeb[^}]*animation:connie-shimmer/);
+    expect(CSS).toMatch(/\.h1\{[^}]*#cbd5e1/);
+    expect(CSS).toMatch(/\.h2\{[^}]*#cbd5e1/);
+    expect(CSS).toContain("@keyframes connie-shimmer");
+  });
+
+  it("lays the paper out where the SignPage's own sits, so nothing moves on ready", () => {
+    // The column: 48px above the title and 24px either side of the paper, the
+    // title's 32px line and the subtitle's 28px line 8px apart, then 48px to
+    // the paper, which is square with 96px by 48px of padding.
+    expect(CSS).toMatch(/\.canvas\{[^}]*padding:48px 24px 0;/);
+    expect(CSS).toMatch(/\.canvas\{[^}]*scrollbar-gutter:stable/);
+    expect(CSS).toMatch(/\.h1\{[^}]*height:24px;margin:4px auto 0;/);
+    expect(CSS).toMatch(/\.h2\{[^}]*height:18px;margin:17px auto 0;/);
+    expect(CSS).toMatch(
+      /\.page\{max-width:848px;[^}]*margin:53px auto 0;padding:96px 48px 0;[^}]*border-radius:0;background:#ffffff;box-shadow:/,
+    );
+  });
+
+  it("narrows the column with the frame, not the host page, below 640px", () => {
+    expect(CSS).toMatch(/\.skeleton\{[^}]*container-type:inline-size/);
+    expect(CSS).toContain(
+      "@container (max-width:639.98px){.canvas{padding:32px 16px 0}.page{margin-top:37px}}",
+    );
+  });
+
+  it("stops shimmering and fading under prefers-reduced-motion", () => {
+    expect(CSS).toContain(
+      "@media (prefers-reduced-motion:reduce){.bar{animation:none}.shown,.skeleton{transition:none}}",
+    );
+  });
+
+  it("covers the frame until ready, then cross-fades to it and is removed", () => {
+    vi.useFakeTimers();
+    try {
+      const { skeleton, frame, modal, post } = open();
+      const el = skeleton()!;
+      expect(getComputedStyle(frame).opacity).toBe("0");
+      expect(getComputedStyle(el).opacity).not.toBe("0");
+      expect(Number(getComputedStyle(el).zIndex)).toBeGreaterThan(
+        Number(getComputedStyle(frame).zIndex),
+      );
+      expect(CSS).toMatch(/\.shown\{opacity:1;transition:opacity 200ms ease\}/);
+      // Only once shown, so nothing transitions the frame while it opens.
+      expect(CSS).not.toMatch(/\.frame\{[^}]*transition/);
+      expect(CSS).toMatch(/\.skeleton\{[^}]*transition:opacity 200ms/);
+
+      post("ready", { title: "T" });
+      expect(modal.hasAttribute("aria-busy")).toBe(false);
+      expect(getComputedStyle(frame).opacity).toBe("1");
+      expect(skeleton()).toBe(el);
+      expect(getComputedStyle(el).opacity).toBe("0");
+
+      vi.advanceTimersByTime(200);
+      expect(skeleton()).toBeNull();
+      expect(el.isConnected).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("is swapped for the frame at once under prefers-reduced-motion", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({ matches: query.includes("reduce"), media: query })),
+    );
+    try {
+      const { skeleton, frame, post } = open();
+      expect(skeleton()).not.toBeNull();
+      post("ready", { title: "T" });
+      expect(skeleton()).toBeNull();
+      expect(getComputedStyle(frame).opacity).toBe("1");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
@@ -127,25 +402,51 @@ describe("focus", () => {
     const button = document.createElement("button");
     document.body.append(button);
     button.focus();
-    const { embed, frame } = open();
-    expect(document.activeElement).toBe(frame);
+    const { embed, frame, host, root } = open();
+    expect(document.activeElement).toBe(host);
+    expect(root.activeElement).toBe(frame);
     embed.close();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it("returns without scrolling the page to the element it returns to", () => {
+    const button = document.createElement("button");
+    document.body.append(button);
+    button.focus();
+    const focus = vi.spyOn(button, "focus");
+    open().embed.close();
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     expect(document.activeElement).toBe(button);
   });
 
   it("is kept inside the dialog", () => {
     const outside = document.createElement("input");
     document.body.append(outside);
-    const { frame } = open();
+    const { frame, root } = open();
     outside.focus();
-    expect(document.activeElement).toBe(frame);
+    expect(root.activeElement).toBe(frame);
   });
 
-  it("moves from the close button to the iframe when ready removes the button", () => {
-    const { overlay, frame, post } = open();
-    overlay.querySelector<HTMLButtonElement>(".connie-js-close")!.focus();
+  it("may rest on the close button, inside the shadow root", () => {
+    const { closeButton, host, root } = open();
+    closeButton.focus();
+    expect(document.activeElement).toBe(host);
+    expect(root.activeElement).toBe(closeButton);
+  });
+
+  it("stays on the close button when ready arrives", () => {
+    const { closeButton, root, post } = open();
+    closeButton.focus();
     post("ready", { title: "Data processing addendum" });
-    expect(document.activeElement).toBe(frame);
+    expect(root.activeElement).toBe(closeButton);
+  });
+
+  it("moves to the next embed's iframe when the top one closes", () => {
+    const a = open();
+    const b = open();
+    b.embed.close();
+    expect(document.activeElement).toBe(a.host);
+    expect(a.root.activeElement).toBe(a.frame);
   });
 });
 
@@ -179,6 +480,61 @@ describe("scroll lock", () => {
     b.embed.close();
     expect(root.style.overflow).toBe("");
   });
+
+  describe("the style attributes of html and body", () => {
+    const html = document.documentElement;
+    const body = () => document.body;
+
+    // happy-dom has no scrollbar; a wider window makes the lock pad the body for one.
+    const withScrollbar = () => vi.stubGlobal("innerWidth", html.clientWidth + 15);
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      html.removeAttribute("style");
+      body().removeAttribute("style");
+    });
+
+    it("pads the body for the scrollbar it hides, and leaves both without a style attribute after", () => {
+      withScrollbar();
+      const { embed } = open();
+      expect(body().style.paddingRight).toBe("15px");
+      embed.close();
+      expect(html.getAttribute("style")).toBeNull();
+      expect(body().getAttribute("style")).toBeNull();
+    });
+
+    it("gives back the exact attribute a page had set", () => {
+      withScrollbar();
+      html.style.setProperty("scroll-behavior", "smooth");
+      body().style.setProperty("padding-right", "4px");
+      body().style.setProperty("color", "red");
+      const before = [html.getAttribute("style"), body().getAttribute("style")];
+      const { embed } = open();
+      expect(body().style.paddingRight).toBe("19px");
+      embed.close();
+      expect([html.getAttribute("style"), body().getAttribute("style")]).toEqual(before);
+    });
+
+    it("keeps what the page set inline while the modal was open, and puts back only what it set", () => {
+      withScrollbar();
+      const { embed } = open();
+      html.style.setProperty("color", "red");
+      body().style.setProperty("margin", "0px");
+      embed.close();
+      expect(html.style.overflow).toBe("");
+      expect(html.style.color).toBe("red");
+      expect(body().style.paddingRight).toBe("");
+      expect(body().style.margin).toBe("0px");
+    });
+
+    it("drops an attribute the page emptied while the modal was open, when there was none before", () => {
+      const { embed } = open();
+      html.style.setProperty("color", "red");
+      html.style.removeProperty("color");
+      embed.close();
+      expect(html.getAttribute("style")).toBeNull();
+    });
+  });
 });
 
 describe("Esc", () => {
@@ -190,7 +546,7 @@ describe("Esc", () => {
     open({ onClose });
     esc();
     esc();
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
     expect(onClose).toHaveBeenCalledOnce();
   });
 
@@ -202,36 +558,194 @@ describe("Esc", () => {
     esc();
     expect(second).toHaveBeenCalledOnce();
     expect(first).not.toHaveBeenCalled();
-    expect(overlays()).toEqual([a.overlay]);
+    expect(hosts()).toEqual([a.host]);
+  });
+
+  it("closes while focus is on the close button inside the shadow root", () => {
+    const onClose = vi.fn();
+    const { closeButton } = open({ onClose });
+    closeButton.focus();
+    closeButton.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }),
+    );
+    expect(hosts()).toHaveLength(0);
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("ignores other keys", () => {
     open();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    expect(overlays()).toHaveLength(1);
+    expect(hosts()).toHaveLength(1);
+  });
+
+  it("takes the keydown before the browser does, so the dialog gets no native close request", () => {
+    const cancel = vi.fn();
+    const { modal } = open();
+    modal.addEventListener("cancel", cancel);
+    const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    document.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(cancel).not.toHaveBeenCalled();
+    expect(hosts()).toHaveLength(0);
+  });
+});
+
+describe("the top layer", () => {
+  const cancel = (modal: HTMLElement) => {
+    const event = new Event("cancel", { cancelable: true });
+    modal.dispatchEvent(event);
+    return event;
+  };
+
+  it("cancel: a native close request closes through connie-js, once, and the native close is prevented", () => {
+    const onClose = vi.fn();
+    const button = document.createElement("button");
+    document.body.append(button);
+    button.focus();
+    const { modal } = open({ onClose });
+    const close = vi.spyOn(modal as HTMLDialogElement, "close");
+    const event = cancel(modal);
+    cancel(modal);
+    expect(event.defaultPrevented).toBe(true);
+    expect(close).not.toHaveBeenCalled();
+    expect(hosts()).toHaveLength(0);
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it("close: a dialog closed from outside connie-js tears down, calls onClose once, returns focus", () => {
+    const onClose = vi.fn();
+    const button = document.createElement("button");
+    document.body.append(button);
+    button.focus();
+    const { modal } = open({ onClose });
+    (modal as HTMLDialogElement).close();
+    expect(hosts()).toHaveLength(0);
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(button);
+    expect(document.documentElement.style.overflow).toBe("");
+  });
+
+  it("close: a late close event after connie-js closed changes nothing", () => {
+    const onClose = vi.fn();
+    const { embed, modal } = open({ onClose });
+    embed.close();
+    modal.dispatchEvent(new Event("close"));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("stacks two embeds as two top-layer dialogs, the later one on top", () => {
+    const showModal = vi.spyOn(HTMLDialogElement.prototype, "showModal");
+    const a = open();
+    const b = open();
+    expect(showModal.mock.contexts).toEqual([a.modal, b.modal]);
+    expect(a.modal).not.toBe(b.modal);
+    expect(a.root).not.toBe(b.root);
+    expect([(a.modal as HTMLDialogElement).open, (b.modal as HTMLDialogElement).open]).toEqual([
+      true,
+      true,
+    ]);
+    expect(document.activeElement).toBe(b.host);
+    expect(b.root.activeElement).toBe(b.frame);
+  });
+
+  it("cancel on the top dialog closes only that embed, and focus moves to the one below", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const a = open({ onClose: first });
+    const b = open({ onClose: second });
+    cancel(b.modal);
+    expect(second).toHaveBeenCalledOnce();
+    expect(first).not.toHaveBeenCalled();
+    expect(hosts()).toEqual([a.host]);
+    expect((a.modal as HTMLDialogElement).open).toBe(true);
+    expect(a.root.activeElement).toBe(a.frame);
+    expect(document.documentElement.style.overflow).toBe("hidden");
+  });
+
+  it("undoes a zoom on the page, so the overlay keeps its own size", () => {
+    document.documentElement.style.setProperty("zoom", "0.8");
+    document.body.style.setProperty("zoom", "1.5");
+    try {
+      const { host } = open();
+      expect(Number(host.style.getPropertyValue("zoom"))).toBeCloseTo(1 / 1.2, 6);
+      expect(host.style.getPropertyPriority("zoom")).toBe("important");
+    } finally {
+      document.documentElement.style.removeProperty("zoom");
+      document.documentElement.removeAttribute("style");
+      document.body.removeAttribute("style");
+    }
+  });
+
+  it("sets no zoom on an unzoomed page", () => {
+    const { host } = open();
+    expect(host.style.getPropertyValue("zoom")).toBe("");
+  });
+
+  describe("without HTMLDialogElement.showModal", () => {
+    const prototype = HTMLDialogElement.prototype as Partial<HTMLDialogElement>;
+    const showModal = prototype.showModal;
+
+    beforeEach(() => {
+      delete prototype.showModal;
+    });
+
+    afterEach(() => {
+      prototype.showModal = showModal;
+    });
+
+    it("falls back to the fixed host, with the panel as the labelled modal dialog", () => {
+      const { root, host, modal, dialog, overlay, post } = open();
+      expect(root.querySelector("dialog")).toBeNull();
+      expect(modal).toBe(dialog);
+      expect(overlay.parentNode).toBe(root);
+      expect(dialog.getAttribute("role")).toBe("dialog");
+      expect(dialog.getAttribute("aria-modal")).toBe("true");
+      expect(dialog.getAttribute("aria-label")).toBe("SignPage");
+      expect(dialog.getAttribute("aria-busy")).toBe("true");
+      expect(host.style.getPropertyValue("position")).toBe("fixed");
+      expect(host.style.getPropertyValue("z-index")).toBe("2147483000");
+      post("ready", { title: "Addendum" });
+      expect(dialog.getAttribute("aria-label")).toBe("Addendum");
+      expect(dialog.hasAttribute("aria-busy")).toBe(false);
+    });
+
+    it("still closes on Esc and the X, and keeps focus in the overlay", () => {
+      const onClose = vi.fn();
+      const outside = document.createElement("input");
+      document.body.append(outside);
+      const a = open({ onClose });
+      outside.focus();
+      expect(a.root.activeElement).toBe(a.frame);
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(hosts()).toHaveLength(0);
+      open({ onClose }).closeButton.click();
+      expect(hosts()).toHaveLength(0);
+      expect(onClose).toHaveBeenCalledTimes(2);
+    });
   });
 });
 
 describe("messages", () => {
-  it("ready: hides the spinner, labels the dialog and iframe with the title, calls onReady once", () => {
+  it("ready: shows the frame, labels the dialog and iframe with the title, calls onReady once", () => {
     const onReady = vi.fn();
-    const { dialog, frame, overlay, post } = open({ onReady });
+    const { modal, frame, closeButton, post } = open({ onReady });
     post("ready", { title: "AI Processing Addendum" });
-    expect(overlay.querySelector(".connie-js-spinner")).toBeNull();
-    expect(overlay.querySelector(".connie-js-close")).toBeNull();
-    expect(dialog.hasAttribute("aria-busy")).toBe(false);
-    expect(dialog.getAttribute("aria-label")).toBe("AI Processing Addendum");
+    expect(getComputedStyle(frame).opacity).toBe("1");
+    expect(closeButton.isConnected).toBe(true);
+    expect(modal.hasAttribute("aria-busy")).toBe(false);
+    expect(modal.getAttribute("aria-label")).toBe("AI Processing Addendum");
     expect(frame.title).toBe("AI Processing Addendum");
     post("ready", { title: "AI Processing Addendum" });
     expect(onReady).toHaveBeenCalledOnce();
   });
 
   it("ready without a usable title keeps the fallback label", () => {
-    const { dialog, post } = open();
+    const { modal, post } = open();
     post("ready", { title: 42 });
-    expect(dialog.getAttribute("aria-label")).toBe("SignPage");
+    expect(modal.getAttribute("aria-label")).toBe("SignPage");
     post("ready");
-    expect(dialog.getAttribute("aria-label")).toBe("SignPage");
+    expect(modal.getAttribute("aria-label")).toBe("SignPage");
   });
 
   it("signed: calls onSigned once and keeps the modal open on the frame's confirmation", () => {
@@ -243,7 +757,7 @@ describe("messages", () => {
     post("ready", { title: "T" });
     post("signed");
     post("signed");
-    expect(overlays()).toHaveLength(1);
+    expect(hosts()).toHaveLength(1);
     expect(calls).toEqual(["signed"]);
   });
 
@@ -255,7 +769,7 @@ describe("messages", () => {
     });
     post("signed");
     post("close");
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
     expect(calls).toEqual(["signed", "close"]);
   });
 
@@ -269,7 +783,7 @@ describe("messages", () => {
       },
       onClose: () => calls.push("close"),
     });
-    const frame = overlays()[0].querySelector("iframe")!;
+    const frame = frameOf(hosts()[0]);
     const frameWindow = stubFrameWindow(frame);
     window.dispatchEvent(
       new MessageEvent("message", {
@@ -283,7 +797,7 @@ describe("messages", () => {
         source: frameWindow,
       }),
     );
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
     expect(calls).toEqual(["signed", "close"]);
   });
 
@@ -293,7 +807,7 @@ describe("messages", () => {
     post("close");
     post("close");
     embed.close();
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
     expect(onClose).toHaveBeenCalledOnce();
   });
 
@@ -304,7 +818,7 @@ describe("messages", () => {
       onClose: () => calls.push("close"),
     });
     post("error", { code: "expired", message: "This link has expired." });
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
     expect(calls).toEqual([{ code: "expired", message: "This link has expired." }, "close"]);
   });
 
@@ -335,12 +849,30 @@ describe("messages", () => {
     for (const fn of Object.values(callbacks)) expect(fn).not.toHaveBeenCalled();
   });
 
+  it("navigate: follows the eID handoff on a loopback http frame", () => {
+    const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+    const local = "http://sign.connie.localhost:4000";
+    open({ url: `${local}/embed/x` }).post(
+      "navigate",
+      { url: `${local}/openid/authorize/s` },
+      { origin: local },
+    );
+    expect(assign).toHaveBeenCalledWith("http://sign.connie.localhost:4000/openid/authorize/s");
+  });
+
   it.each([
     ["another origin", "https://evil.example/openid/authorize/x"],
     ["plain http on the frame's host", "http://sign.page/openid/authorize/x"],
     ["javascript:", "javascript:alert(document.domain)"],
     ["a relative url", "/openid/authorize/x"],
     ["a non-string", 12],
+    ["another path on the frame's origin", `${FRAME_ORIGIN}/embed/other_session`],
+    ["the frame's origin root", `${FRAME_ORIGIN}/`],
+    ["the handoff path without its trailing slash", `${FRAME_ORIGIN}/openid/authorize`],
+    ["a path that only starts like the handoff", `${FRAME_ORIGIN}/openid/authorizex/y`],
+    ["a dot segment out of the handoff", `${FRAME_ORIGIN}/openid/authorize/../../embed/x`],
+    ["an encoded dot segment", `${FRAME_ORIGIN}/openid/authorize/%2e%2e/%2E%2E/embed/x`],
+    ["credentials on the frame's origin", "https://u:p@sign.page/openid/authorize/x"],
   ])("navigate: ignores %s", (_name, url) => {
     const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
     open().post("navigate", { url });
@@ -350,7 +882,7 @@ describe("messages", () => {
   it("ignores unknown message types", () => {
     const onClose = vi.fn();
     open({ onClose }).post("resize", { height: 10 });
-    expect(overlays()).toHaveLength(1);
+    expect(hosts()).toHaveLength(1);
     expect(onClose).not.toHaveBeenCalled();
   });
 });
@@ -391,7 +923,7 @@ describe("message rejection", () => {
     const onClose = vi.fn();
     const h = open({ onClose });
     send(h);
-    expect(overlays()).toHaveLength(1);
+    expect(hosts()).toHaveLength(1);
     expect(onClose).not.toHaveBeenCalled();
   });
 });
@@ -417,7 +949,7 @@ describe("two embeds", () => {
     ha.post("close");
     expect(a.onClose).toHaveBeenCalledOnce();
     expect(b.onClose).not.toHaveBeenCalled();
-    expect(overlays()).toEqual([hb.overlay]);
+    expect(hosts()).toEqual([hb.host]);
 
     hb.post("close");
     expect(b.onClose).toHaveBeenCalledOnce();
@@ -431,7 +963,7 @@ describe("embed.close()", () => {
     const { embed } = open({ onClose });
     embed.close();
     embed.close();
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
     expect(onClose).toHaveBeenCalledOnce();
   });
 
@@ -452,18 +984,18 @@ describe("embed.close()", () => {
     });
     post("signed");
     post("close");
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
     expect(() => vi.runAllTimers()).toThrow("host bug");
     vi.useRealTimers();
   });
 });
 
 describe("fetchUrl", () => {
-  it("shows the spinner while fetching, then frames the url it resolves with", async () => {
+  it("shows the skeleton while fetching, then frames the url it resolves with", async () => {
     let resolve!: (url: string) => void;
     const fetchUrl = vi.fn(() => new Promise<string>((r) => (resolve = r)));
-    const { frame, overlay } = open({ fetchUrl });
-    expect(overlay.querySelector(".connie-js-spinner")).not.toBeNull();
+    const { frame, skeleton } = open({ fetchUrl });
+    expect(skeleton()).not.toBeNull();
     expect(frame.getAttribute("src")).toBeNull();
     resolve(SESSION_URL);
     await flush();
@@ -480,7 +1012,7 @@ describe("fetchUrl", () => {
     });
     await flush();
     expect(calls).toEqual([{ code: "fetch_failed", message: "backend down" }, "close"]);
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
   });
 
   it("reports fetch_failed when it throws synchronously", async () => {
@@ -503,7 +1035,7 @@ describe("fetchUrl", () => {
       code: "invalid_url",
       message: "fetchUrl did not resolve with an https URL",
     });
-    expect(overlays()).toHaveLength(0);
+    expect(hosts()).toHaveLength(0);
   });
 
   it("does nothing when the embed was closed before it resolved", async () => {
