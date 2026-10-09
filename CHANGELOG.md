@@ -17,6 +17,9 @@ All notable changes to `@getconnie/connie-js` and the hosted script at
   SignPage's title. A close request from the browser, such as Android's back
   gesture, closes it like Esc.
 - Focus goes back to where it was on close without scrolling the page.
+- Closing leaves `<html>` and `<body>` with the inline styles they had: no
+  empty `style=""` where there was no attribute, and inline styles the page
+  set while the modal was open are kept.
 - The modal lives in a closed Shadow DOM on a single element appended to
   `document.body`, styled by a constructed stylesheet adopted into the shadow
   root. The host page's CSS, including `* { all: unset }` and `!important`

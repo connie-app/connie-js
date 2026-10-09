@@ -29,9 +29,19 @@ function call<A extends unknown[]>(fn: ((...args: A) => void) | undefined, ...ar
   }
 }
 
-/** Sets inline properties through CSSOM and returns a function that puts the previous values back. */
+/**
+ * Sets inline properties through CSSOM and returns a function that puts the
+ * previous values of those properties back, leaving any other inline style
+ * the page set meanwhile alone. An element that had no `style` attribute is
+ * left without one, unless the page added declarations of its own.
+ *
+ * Engines serialise inline styles into the attribute lazily, so a
+ * `removeAttribute("style")` straight after `removeProperty` acts on a stale
+ * attribute and the pending serialisation writes `style=""` back. Reading
+ * the attribute first brings it up to date, and the removal then holds.
+ */
 function setStyles(el: HTMLElement, props: Record<string, string>): () => void {
-  const hadAttribute = el.hasAttribute("style");
+  const original = el.getAttribute("style");
   const previous = Object.keys(props).map(
     (k) => [k, el.style.getPropertyValue(k), el.style.getPropertyPriority(k)] as const,
   );
@@ -41,7 +51,7 @@ function setStyles(el: HTMLElement, props: Record<string, string>): () => void {
       if (v) el.style.setProperty(k, v, priority);
       else el.style.removeProperty(k);
     }
-    if (!hadAttribute && !el.style.length) el.removeAttribute("style");
+    if (original === null && el.getAttribute("style") === "") el.removeAttribute("style");
   };
 }
 

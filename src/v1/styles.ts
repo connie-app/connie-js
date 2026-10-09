@@ -117,7 +117,7 @@ const BASE: Record<Part, string> = {
   top: `all:initial;display:block;position:fixed;inset:0;width:100%;height:100vh;height:100dvh;max-width:none;max-height:none;margin:0;padding:0;border:0;overflow:visible;background:transparent;outline:0`,
   overlay: `position:absolute;inset:0;display:flex;align-items:center;justify-content:center;margin:0;padding:24px;box-sizing:border-box;background:${COLORS.backdrop}`,
   dialog: `position:relative;width:100%;max-width:760px;height:100%;max-height:900px;margin:0;padding:0;box-sizing:border-box;overflow:hidden;background:${COLORS.surface};border-radius:12px;box-shadow:0 24px 64px rgba(0,0,0,.3)`,
-  frame: `position:absolute;inset:0;z-index:0;display:block;width:100%;height:100%;margin:0;padding:0;border:0;opacity:0;transition:opacity ${FADE_MS}ms ease`,
+  frame: `position:absolute;inset:0;z-index:0;display:block;width:100%;height:100%;margin:0;padding:0;border:0;opacity:0`,
   skeleton: `position:absolute;inset:0;z-index:1;overflow:hidden;container-type:inline-size;background:${COLORS.canvas};pointer-events:none;transition:opacity ${FADE_MS}ms ease`,
   head: `display:flex;align-items:center;height:${HEADER_BAND}px;padding:0 ${HEADER_BAND + 16}px 0 16px;box-sizing:border-box;border-bottom:1px solid ${COLORS.border};background:${COLORS.surface}`,
   canvas: `height:calc(100% - ${HEADER_BAND}px);${inset(COLUMN.inset[0])};box-sizing:border-box;overflow:hidden;scrollbar-gutter:stable`,
@@ -129,7 +129,10 @@ const BASE: Record<Part, string> = {
   heading: `width:55%;height:24px;margin:4px 0 28px`,
   line: `height:12px;margin-top:12px`,
   close: `position:absolute;top:8px;right:8px;z-index:2;display:flex;align-items:center;justify-content:center;width:40px;height:40px;margin:0;padding:0;box-sizing:border-box;border:0;border-radius:8px;background:transparent;color:${COLORS.icon};cursor:pointer;-webkit-tap-highlight-color:transparent`,
-  shown: `opacity:1`,
+  // The frame's fade-in is declared on `shown`, not on the frame: WebKit
+  // styles an inserted iframe once without the adopted sheet, and a
+  // transition on the frame would then run it from 1 down to 0 at open.
+  shown: `opacity:1;transition:opacity ${FADE_MS}ms ease`,
   faded: `opacity:0`,
 };
 
@@ -168,7 +171,7 @@ export const CSS =
   `@keyframes connie-shimmer{from{background-position:100% 0}to{background-position:-100% 0}}` +
   `@media (max-width:639.98px){${rules(FULL_SCREEN)}}` +
   `@container (max-width:${NARROW_BELOW - 0.02}px){${rules(NARROW)}}` +
-  `@media (prefers-reduced-motion:reduce){.bar{animation:none}.frame,.skeleton{transition:none}}`;
+  `@media (prefers-reduced-motion:reduce){.bar{animation:none}.shown,.skeleton{transition:none}}`;
 
 function apply(el: HTMLElement, decls: string): void {
   for (const decl of decls.split(";")) {

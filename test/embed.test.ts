@@ -312,7 +312,7 @@ describe("the skeleton", () => {
 
   it("stops shimmering and fading under prefers-reduced-motion", () => {
     expect(CSS).toContain(
-      "@media (prefers-reduced-motion:reduce){.bar{animation:none}.frame,.skeleton{transition:none}}",
+      "@media (prefers-reduced-motion:reduce){.bar{animation:none}.shown,.skeleton{transition:none}}",
     );
   });
 
@@ -326,7 +326,9 @@ describe("the skeleton", () => {
       expect(Number(getComputedStyle(el).zIndex)).toBeGreaterThan(
         Number(getComputedStyle(frame).zIndex),
       );
-      expect(CSS).toMatch(/\.frame\{[^}]*transition:opacity 200ms/);
+      expect(CSS).toMatch(/\.shown\{opacity:1;transition:opacity 200ms ease\}/);
+      // Only once shown, so nothing transitions the frame while it opens.
+      expect(CSS).not.toMatch(/\.frame\{[^}]*transition/);
       expect(CSS).toMatch(/\.skeleton\{[^}]*transition:opacity 200ms/);
 
       post("ready", { title: "T" });
@@ -442,6 +444,61 @@ describe("scroll lock", () => {
     expect(root.style.overflow).toBe("hidden");
     b.embed.close();
     expect(root.style.overflow).toBe("");
+  });
+
+  describe("the style attributes of html and body", () => {
+    const html = document.documentElement;
+    const body = () => document.body;
+
+    // happy-dom has no scrollbar; a wider window makes the lock pad the body for one.
+    const withScrollbar = () => vi.stubGlobal("innerWidth", html.clientWidth + 15);
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      html.removeAttribute("style");
+      body().removeAttribute("style");
+    });
+
+    it("pads the body for the scrollbar it hides, and leaves both without a style attribute after", () => {
+      withScrollbar();
+      const { embed } = open();
+      expect(body().style.paddingRight).toBe("15px");
+      embed.close();
+      expect(html.getAttribute("style")).toBeNull();
+      expect(body().getAttribute("style")).toBeNull();
+    });
+
+    it("gives back the exact attribute a page had set", () => {
+      withScrollbar();
+      html.style.setProperty("scroll-behavior", "smooth");
+      body().style.setProperty("padding-right", "4px");
+      body().style.setProperty("color", "red");
+      const before = [html.getAttribute("style"), body().getAttribute("style")];
+      const { embed } = open();
+      expect(body().style.paddingRight).toBe("19px");
+      embed.close();
+      expect([html.getAttribute("style"), body().getAttribute("style")]).toEqual(before);
+    });
+
+    it("keeps what the page set inline while the modal was open, and puts back only what it set", () => {
+      withScrollbar();
+      const { embed } = open();
+      html.style.setProperty("color", "red");
+      body().style.setProperty("margin", "0px");
+      embed.close();
+      expect(html.style.overflow).toBe("");
+      expect(html.style.color).toBe("red");
+      expect(body().style.paddingRight).toBe("");
+      expect(body().style.margin).toBe("0px");
+    });
+
+    it("drops an attribute the page emptied while the modal was open, when there was none before", () => {
+      const { embed } = open();
+      html.style.setProperty("color", "red");
+      html.style.removeProperty("color");
+      embed.close();
+      expect(html.getAttribute("style")).toBeNull();
+    });
   });
 });
 
