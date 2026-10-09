@@ -4,6 +4,8 @@ import { parseAllowedUrl, randomId, withEmbedId } from "./url.js";
 
 const FALLBACK_LABEL = "SignPage";
 const SVG = "http://www.w3.org/2000/svg";
+/** The path of the eID handoff, the only page the frame may send the host page to. */
+const HANDOFF_PATH = "/openid/authorize/";
 
 interface OpenEmbed {
   /** The shadow host on `document.body`; everything else is inside its closed root. */
@@ -231,6 +233,8 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
   const frame = styler.part("iframe", "frame");
   frame.title = FALLBACK_LABEL;
   frame.setAttribute("allow", "camera");
+  // The SignPage learns which site embeds it, never the page's path or query.
+  frame.referrerPolicy = "strict-origin";
 
   const loading = skeleton(styler);
   const closeButton = closeButtonOf(doc, styler);
@@ -333,8 +337,12 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
         fail(toError(payload));
         break;
       case "navigate": {
+        // The one navigation the frame may ask for: the eID handoff, which
+        // cannot run framed. Anything else is ignored.
         const target = parseAllowedUrl(payload.url);
-        if (target && target.origin === frameOrigin) window.location.assign(target.href);
+        if (target && target.origin === frameOrigin && target.pathname.startsWith(HANDOFF_PATH)) {
+          window.location.assign(target.href);
+        }
         break;
       }
     }
@@ -342,7 +350,13 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
 
   const start = (sessionUrl: URL): void => {
     frameOrigin = sessionUrl.origin;
+    // WebKit applies an iframe's referrerpolicy only to the src it has when it
+    // is inserted, so the frame goes back in place carrying its src.
+    const focused = root.activeElement === frame;
+    frame.remove();
     frame.src = withEmbedId(sessionUrl, embedId);
+    dialog.prepend(frame);
+    if (focused) frame.focus();
   };
 
   closeButton.addEventListener("click", () => finish());

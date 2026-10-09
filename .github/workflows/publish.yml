@@ -6,7 +6,8 @@ on:
 
 # Trusted publishing (OIDC): npm accepts this workflow's short-lived identity
 # token, so there is no npm token anywhere. The trusted publisher is configured
-# on npmjs.com for connie-app/connie-js and this file, publish.yml.
+# on npmjs.com for connie-app/connie-js, this file, publish.yml, and the
+# environment npm.
 permissions:
   contents: read
   id-token: write
@@ -14,9 +15,11 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Publishing waits for a reviewer's approval, and runs only for v* tags.
+    environment: npm
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
@@ -31,7 +34,10 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match package.json $version" >&2
             exit 1
           fi
-      - run: npm ci
+      # Dependencies' install scripts never run. esbuild's postinstall, the only
+      # one, just checks its binary; esbuild finds the binary through its
+      # optional @esbuild/<platform> dependency without it.
+      - run: npm ci --ignore-scripts
       - run: npm run format:check
       - run: npm run typecheck
       - run: npm test

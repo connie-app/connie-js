@@ -94,7 +94,12 @@ window, and with that embed's `embedId`:
 | `signed`   |                     | `onSigned`. The modal stays open.                           |
 | `close`    |                     | Closes the modal, `onClose`.                                |
 | `error`    | `{ code, message }` | Closes the modal, `onError`, then `onClose`.                |
-| `navigate` | `{ url }`           | Moves your page to `url`, if it is on the frame's origin.   |
+| `navigate` | `{ url }`           | Moves your page to the eID handoff at `url` (see below).    |
+
+`navigate` is followed only when `url` is on the frame's own origin, is `https`
+(or `http` on a loopback host), carries no credentials, and its path starts with
+`/openid/authorize/`, which is where the eID flow begins. Any other `navigate` is
+ignored, so a SignPage can never send your page anywhere else.
 
 ## Quick start
 
@@ -335,6 +340,11 @@ for your account.
   through `showModal()`, a DOM call, not markup.
 - **No `connect-src` or `img-src` change.** Everything the SignPage loads is
   governed by Connie's CSP, not yours.
+- **Trusted Types.** If your policy has `require-trusted-types-for 'script'`,
+  `loadConnie()` assigns the script URL through a Trusted Types policy named
+  `connie-js`, which passes only the exact URL it loads. Add the name to your
+  `trusted-types` directive, if you have one: `trusted-types connie-js`
+  (alongside your own policy names). A plain `<script>` tag needs nothing.
 - **Nonces and `'strict-dynamic'`.** If your policy uses `'strict-dynamic'`,
   give the script tag (or the bundle that calls `loadConnie()`) your nonce;
   the script tag `loadConnie()` adds is then trusted too.
@@ -349,6 +359,32 @@ for your account.
   popup.
 - **Cross-Origin-Embedder-Policy: `require-corp` is not supported.** A page with
   it cannot frame the SignPage.
+
+## Security
+
+What connie-js trusts, and what it does not:
+
+- **The session URL is the root of trust.** Pass `url` (or resolve `fetchUrl`
+  with) exactly the `url` the Connie API returned when your backend minted the
+  session, unchanged. connie-js frames whatever `https` URL it is given and
+  then trusts messages from that URL's origin, so a URL taken from anywhere
+  else (a query parameter, user input, a database field someone else can
+  write) would let that origin talk to your page.
+- **Messages** are accepted only from the frame's origin, from the frame's own
+  window, and with the embed's random `embedId`. Their payloads are data: the
+  `ready` title becomes text, never markup, and an error's `code` and `message`
+  are handed to `onError` as strings.
+- **Navigation.** The only way the SignPage can move your page is the eID
+  handoff, a `navigate` to `/openid/authorize/…` on its own origin.
+- **The frame** is sent your page's origin as its referrer, never its path or
+  query (`referrerpolicy="strict-origin"`), so a token in your page's URL does
+  not reach Connie.
+- **`window.Connie`.** The hosted script defines it read-only. An element with
+  `id="Connie"` on your page is never mistaken for it, by the script or by
+  `loadConnie()`.
+- **`onSigned` is not proof** of anything (see above). Act on the webhook.
+- **Load the script only** from `https://assets.getconnie.com/js/v1.js`, or
+  through `loadConnie()`, which does.
 
 ## eID
 

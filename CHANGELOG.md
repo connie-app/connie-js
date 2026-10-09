@@ -39,6 +39,22 @@ All notable changes to `@getconnie/connie-js` and the hosted script at
 - The dialog's height follows `100dvh` (falling back to `100vh`), so mobile
   browser bars do not hide its bottom, and full screen on phones keeps clear of
   safe-area insets.
+- Security hardening:
+  - A `navigate` message is followed only to the eID handoff: an `https` (or
+    loopback `http`) URL on the frame's own origin whose path starts with
+    `/openid/authorize/`. Every other `navigate` is ignored.
+  - The frame is loaded with `referrerpolicy="strict-origin"`, so the SignPage
+    is sent the host page's origin but never its path or query.
+  - `window.Connie` counts as loaded only when it has an `openSignPage`
+    function, so an element with `id="Connie"` (which browsers expose as
+    `window.Connie`) no longer stops the hosted script from defining it, and
+    `loadConnie()` never resolves with a DOM element. The hosted script defines
+    `window.Connie` read-only and not enumerable.
+  - Under Trusted Types (`require-trusted-types-for 'script'`), `loadConnie()`
+    assigns the script URL through a policy named `connie-js` that passes only
+    the exact URL it loads. Allow it with `trusted-types connie-js`.
+  - `loadConnie()` can be called again after any failure, including one thrown
+    while starting to load, not only a failed download.
 
 ## 1.0.0
 

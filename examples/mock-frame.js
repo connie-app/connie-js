@@ -20,7 +20,8 @@ on("expired", () => post("error", { code: "expired", message: "This signing link
 on("no-credits", () =>
   post("error", { code: "no_credits", message: "This SignPage cannot be signed right now." }),
 );
-on("navigate", () => post("navigate", { url: `${location.origin}/examples/index.html?eid=1` }));
+// The eID handoff: connie-js follows only /openid/authorize/… on the frame's origin.
+on("navigate", () => post("navigate", { url: `${location.origin}/openid/authorize/mock` }));
 on("navigate-evil", () => post("navigate", { url: "https://evil.example/" }));
 
 document.addEventListener("keydown", (event) => {

@@ -13,6 +13,7 @@ const run = () => (0, eval)(v1);
 describe("dist/v1.js", () => {
   afterEach(() => {
     delete window.Connie;
+    delete (Object.getPrototypeOf(window) as { Connie?: unknown }).Connie;
   });
 
   it("defines window.Connie with openSignPage and the package version", () => {
@@ -36,10 +37,58 @@ describe("dist/v1.js", () => {
     expect(window.Connie).toBe(existing);
   });
 
-  it("defines no other globals", () => {
-    const before = new Set(Object.keys(window));
+  it("defines window.Connie read-only and not enumerable", () => {
     run();
-    expect(Object.keys(window).filter((k) => !before.has(k))).toEqual(["Connie"]);
+    const first = window.Connie;
+    expect(Object.getOwnPropertyDescriptor(window, "Connie")).toEqual({
+      value: first,
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+    expect(() => {
+      (window as { Connie?: unknown }).Connie = { openSignPage: () => {} };
+    }).toThrow(TypeError);
+    expect(window.Connie).toBe(first);
+  });
+
+  it("replaces an element with id Connie, which browsers expose as window.Connie", () => {
+    const a = document.createElement("a");
+    a.id = "Connie";
+    document.body.append(a);
+    Object.defineProperty(Object.getPrototypeOf(window), "Connie", {
+      get: () => a,
+      configurable: true,
+    });
+    run();
+    expect(window.Connie).not.toBe(a);
+    expect(typeof window.Connie?.openSignPage).toBe("function");
+    a.remove();
+  });
+
+  it("replaces a window.Connie without openSignPage", () => {
+    (window as { Connie?: unknown }).Connie = { version: "0.0.0" };
+    run();
+    expect(typeof window.Connie?.openSignPage).toBe("function");
+    expect(window.Connie?.version).toBe(pkg.version);
+  });
+
+  it("assigns over a global the page declared with var, which cannot be redefined", () => {
+    const fakeWindow = {};
+    Object.defineProperty(fakeWindow, "Connie", {
+      value: undefined,
+      writable: true,
+      enumerable: true,
+      configurable: false,
+    });
+    new Function("window", v1)(fakeWindow);
+    expect(typeof (fakeWindow as Window).Connie?.openSignPage).toBe("function");
+  });
+
+  it("defines no other globals", () => {
+    const before = new Set(Object.getOwnPropertyNames(window));
+    run();
+    expect(Object.getOwnPropertyNames(window).filter((k) => !before.has(k))).toEqual(["Connie"]);
   });
 
   it("is a single IIFE", () => {
