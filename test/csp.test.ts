@@ -61,10 +61,19 @@ describe("CSP", () => {
     expect(insertAdjacentHTML).not.toHaveBeenCalled();
   });
 
-  it("styles nothing inside the shadow root inline when the stylesheet is adopted", () => {
+  it("styles nothing inside the shadow root inline when the stylesheet is adopted, the top-layer dialog included", () => {
     const { root } = open();
+    expect(root.querySelector("dialog")).not.toBeNull();
     expect(Array.from(root.querySelectorAll("[style]"))).toEqual([]);
     expect(hosts()).toHaveLength(1);
+  });
+
+  it("opens the dialog through showModal and listens with addEventListener, never inline handler attributes", () => {
+    const showModal = vi.spyOn(HTMLDialogElement.prototype, "showModal");
+    const setAttribute = vi.spyOn(Element.prototype, "setAttribute");
+    fullCycle();
+    expect(showModal).toHaveBeenCalledOnce();
+    expect(setAttribute.mock.calls.map(([name]) => name).filter((n) => /^on/i.test(n))).toEqual([]);
   });
 
   it("the built script contains no HTML-string or inline-style APIs", () => {
@@ -108,9 +117,16 @@ describe("without constructable stylesheets", () => {
     const host = hosts()[0];
     const root = rootOf(host);
     expect(root.adoptedStyleSheets).toEqual([]);
+    const top = root.querySelector<HTMLElement>("dialog")!;
     const overlay = root.querySelector<HTMLElement>(".overlay")!;
     const dialog = root.querySelector<HTMLElement>(".dialog")!;
     const close = root.querySelector<HTMLElement>(".close")!;
+    expect(top.style.getPropertyValue("position")).toBe("fixed");
+    expect(top.style.getPropertyPriority("position")).toBe("important");
+    expect(top.style.getPropertyValue("max-width")).toBe("none");
+    expect(top.style.getPropertyValue("background")).toMatch(/transparent|rgba\(0, 0, 0, 0\)/);
+    // No inline ::backdrop: the overlay, full screen and opaque here, covers it.
+    expect(overlay.style.getPropertyValue("background")).toMatch(/#ffffff|rgb\(255, 255, 255\)/);
     expect(host.style.getPropertyValue("z-index")).toBe("2147483000");
     expect(host.style.getPropertyPriority("z-index")).toBe("important");
     expect(host.style.getPropertyValue("position")).toBe("fixed");

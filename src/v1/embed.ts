@@ -95,6 +95,18 @@ function listen(doc: Document, on: boolean): void {
   }
 }
 
+/**
+ * Whether the overlay can go in the top layer, as a modal `<dialog>`: above
+ * every `z-index`, sized by the viewport whatever transform, filter or
+ * containment its ancestors carry, with the rest of the page inert.
+ */
+function hasTopLayer(): boolean {
+  return (
+    typeof HTMLDialogElement === "function" &&
+    typeof HTMLDialogElement.prototype.showModal === "function"
+  );
+}
+
 function reducedMotion(): boolean {
   return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
@@ -192,12 +204,18 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
   let signedFired = false;
 
   const { host, root, styler } = shadow(doc);
+  // The top layer's `<dialog>` is the modal dialog to assistive technology,
+  // with its native role and modality. Without one, the panel takes the role.
+  const modal = hasTopLayer() ? styler.part("dialog", "top") : null;
   const overlay = styler.part("div", "overlay");
   const dialog = styler.part("div", "dialog");
-  dialog.setAttribute("role", "dialog");
-  dialog.setAttribute("aria-modal", "true");
-  dialog.setAttribute("aria-label", FALLBACK_LABEL);
-  dialog.setAttribute("aria-busy", "true");
+  const named: HTMLElement = modal || dialog;
+  if (!modal) {
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+  }
+  named.setAttribute("aria-label", FALLBACK_LABEL);
+  named.setAttribute("aria-busy", "true");
 
   // The iframe sits under the skeleton from the start, invisible until `ready`.
   const frame = styler.part("iframe", "frame");
@@ -209,7 +227,12 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
 
   dialog.append(frame, loading, closeButton);
   overlay.append(dialog);
-  root.append(overlay);
+  if (modal) {
+    modal.append(overlay);
+    root.append(modal);
+  } else {
+    root.append(overlay);
+  }
 
   const finish = (callback?: () => void): void => {
     if (closed) return;
@@ -226,7 +249,9 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
     if (wasTop) {
       const next = stack[stack.length - 1];
       if (next) next.frame.focus();
-      else if (returnFocus?.isConnected) (returnFocus as HTMLElement).focus?.();
+      // The page is where the signer left it, so giving focus back does not scroll it.
+      else if (returnFocus?.isConnected)
+        (returnFocus as HTMLElement).focus?.({ preventScroll: true });
     }
     call(callback);
     call(options.onClose);
@@ -241,11 +266,11 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
   const ready = (title: unknown): void => {
     if (typeof title === "string" && title.trim()) {
       const label = title.trim().slice(0, 200);
-      dialog.setAttribute("aria-label", label);
+      named.setAttribute("aria-label", label);
       frame.title = label;
     }
-    if (dialog.hasAttribute("aria-busy")) {
-      dialog.removeAttribute("aria-busy");
+    if (named.hasAttribute("aria-busy")) {
+      named.removeAttribute("aria-busy");
       styler.mark(frame, "shown");
       if (reducedMotion()) {
         loading.remove();
@@ -311,6 +336,16 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
   };
 
   closeButton.addEventListener("click", () => finish());
+  if (modal) {
+    // A close request the keydown listener did not take first, such as
+    // Android's back gesture, closes through the same path. Esc inside the
+    // frame never reaches the dialog: the frame's document has its own.
+    modal.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      finish();
+    });
+    modal.addEventListener("close", () => finish());
+  }
   const embed: OpenEmbed = { host, root, frame, close: () => finish() };
 
   stack.push(embed);
@@ -318,6 +353,7 @@ export function openSignPage(options: OpenSignPageOptions): SignPageEmbed {
   listen(doc, true);
   window.addEventListener("message", onMessage);
   doc.body.append(host);
+  modal?.showModal();
   frame.focus();
 
   if (initial) {

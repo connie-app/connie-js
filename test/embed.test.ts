@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openSignPage } from "../src/v1/embed.js";
 import { CSS } from "../src/v1/styles.js";
 import {
@@ -72,24 +72,63 @@ describe("the iframe", () => {
 });
 
 describe("the overlay", () => {
-  it("is a modal dialog with a fallback label, busy until ready", () => {
-    const { dialog } = open();
-    expect(dialog.getAttribute("role")).toBe("dialog");
-    expect(dialog.getAttribute("aria-modal")).toBe("true");
-    expect(dialog.getAttribute("aria-label")).toBe("SignPage");
-    expect(dialog.getAttribute("aria-busy")).toBe("true");
+  it("is a native modal dialog with a fallback label, busy until ready, and no second dialog role inside", () => {
+    const { modal, dialog, root } = open();
+    expect(modal.tagName).toBe("DIALOG");
+    expect((modal as HTMLDialogElement).open).toBe(true);
+    expect(modal.hasAttribute("role")).toBe(false);
+    expect(modal.getAttribute("aria-label")).toBe("SignPage");
+    expect(modal.getAttribute("aria-busy")).toBe("true");
+    expect(dialog.hasAttribute("role")).toBe(false);
+    expect(dialog.hasAttribute("aria-modal")).toBe(false);
+    expect(root.querySelectorAll('dialog, [role="dialog"], [aria-modal]')).toHaveLength(1);
   });
 
   it("lives in a closed shadow root on a single host appended to body", () => {
-    const { host, root, dialog, frame } = open();
+    const { host, root, modal, dialog, frame } = open();
     expect(host.parentNode).toBe(document.body);
     expect(host.tagName).toBe("DIV");
     expect(host.shadowRoot).toBeNull();
     expect(root.mode).toBe("closed");
     expect(host.childNodes).toHaveLength(0);
+    expect(modal.parentNode).toBe(root);
     expect(dialog.getRootNode()).toBe(root);
     expect(frame.getRootNode()).toBe(root);
-    expect(document.querySelector("iframe, [role=dialog], button")).toBeNull();
+    expect(document.querySelector("dialog, iframe, [role=dialog], button")).toBeNull();
+  });
+
+  it("opens the dialog with showModal, after the host is on the page, so it is in the top layer", () => {
+    const showModal = vi.spyOn(HTMLDialogElement.prototype, "showModal");
+    const show = vi.spyOn(HTMLDialogElement.prototype, "show");
+    let connected = false;
+    showModal.mockImplementation(function (this: HTMLDialogElement) {
+      connected = this.isConnected;
+      this.setAttribute("open", "");
+    });
+    const { modal } = open();
+    expect(showModal).toHaveBeenCalledOnce();
+    expect(showModal.mock.contexts[0]).toBe(modal);
+    expect(connected).toBe(true);
+    expect(show).not.toHaveBeenCalled();
+  });
+
+  it("styles the dialog to fill the viewport with no box of its own, and a transparent backdrop under its own", () => {
+    const { modal, overlay } = open();
+    expect(overlay.parentNode).toBe(modal);
+    expect(CSS).toMatch(
+      /\.top\{all:initial;display:block;position:fixed;inset:0;width:100%;height:100vh;height:100dvh;max-width:none;max-height:none;margin:0;padding:0;border:0;overflow:visible;background:transparent;outline:0\}/,
+    );
+    expect(CSS).toContain(".top::backdrop{background:transparent}");
+    expect(CSS).toMatch(
+      /\.overlay\{position:absolute;inset:0;[^}]*background:rgba\(15,23,42,\.6\)/,
+    );
+    const style = getComputedStyle(modal);
+    expect([style.position, style.display, style.maxWidth, style.margin]).toEqual([
+      "fixed",
+      "block",
+      "none",
+      "0px",
+    ]);
   });
 
   it("gives the host all: initial and a fixed full-viewport box, inline and !important", () => {
@@ -280,7 +319,7 @@ describe("the skeleton", () => {
   it("covers the frame until ready, then cross-fades to it and is removed", () => {
     vi.useFakeTimers();
     try {
-      const { skeleton, frame, dialog, post } = open();
+      const { skeleton, frame, modal, post } = open();
       const el = skeleton()!;
       expect(getComputedStyle(frame).opacity).toBe("0");
       expect(getComputedStyle(el).opacity).not.toBe("0");
@@ -291,7 +330,7 @@ describe("the skeleton", () => {
       expect(CSS).toMatch(/\.skeleton\{[^}]*transition:opacity 200ms/);
 
       post("ready", { title: "T" });
-      expect(dialog.hasAttribute("aria-busy")).toBe(false);
+      expect(modal.hasAttribute("aria-busy")).toBe(false);
       expect(getComputedStyle(frame).opacity).toBe("1");
       expect(skeleton()).toBe(el);
       expect(getComputedStyle(el).opacity).toBe("0");
@@ -330,6 +369,16 @@ describe("focus", () => {
     expect(document.activeElement).toBe(host);
     expect(root.activeElement).toBe(frame);
     embed.close();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it("returns without scrolling the page to the element it returns to", () => {
+    const button = document.createElement("button");
+    document.body.append(button);
+    button.focus();
+    const focus = vi.spyOn(button, "focus");
+    open().embed.close();
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     expect(document.activeElement).toBe(button);
   });
 
@@ -436,28 +485,175 @@ describe("Esc", () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     expect(hosts()).toHaveLength(1);
   });
+
+  it("takes the keydown before the browser does, so the dialog gets no native close request", () => {
+    const cancel = vi.fn();
+    const { modal } = open();
+    modal.addEventListener("cancel", cancel);
+    const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    document.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(cancel).not.toHaveBeenCalled();
+    expect(hosts()).toHaveLength(0);
+  });
+});
+
+describe("the top layer", () => {
+  const cancel = (modal: HTMLElement) => {
+    const event = new Event("cancel", { cancelable: true });
+    modal.dispatchEvent(event);
+    return event;
+  };
+
+  it("cancel: a native close request closes through connie-js, once, and the native close is prevented", () => {
+    const onClose = vi.fn();
+    const button = document.createElement("button");
+    document.body.append(button);
+    button.focus();
+    const { modal } = open({ onClose });
+    const close = vi.spyOn(modal as HTMLDialogElement, "close");
+    const event = cancel(modal);
+    cancel(modal);
+    expect(event.defaultPrevented).toBe(true);
+    expect(close).not.toHaveBeenCalled();
+    expect(hosts()).toHaveLength(0);
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it("close: a dialog closed from outside connie-js tears down, calls onClose once, returns focus", () => {
+    const onClose = vi.fn();
+    const button = document.createElement("button");
+    document.body.append(button);
+    button.focus();
+    const { modal } = open({ onClose });
+    (modal as HTMLDialogElement).close();
+    expect(hosts()).toHaveLength(0);
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(button);
+    expect(document.documentElement.style.overflow).toBe("");
+  });
+
+  it("close: a late close event after connie-js closed changes nothing", () => {
+    const onClose = vi.fn();
+    const { embed, modal } = open({ onClose });
+    embed.close();
+    modal.dispatchEvent(new Event("close"));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("stacks two embeds as two top-layer dialogs, the later one on top", () => {
+    const showModal = vi.spyOn(HTMLDialogElement.prototype, "showModal");
+    const a = open();
+    const b = open();
+    expect(showModal.mock.contexts).toEqual([a.modal, b.modal]);
+    expect(a.modal).not.toBe(b.modal);
+    expect(a.root).not.toBe(b.root);
+    expect([(a.modal as HTMLDialogElement).open, (b.modal as HTMLDialogElement).open]).toEqual([
+      true,
+      true,
+    ]);
+    expect(document.activeElement).toBe(b.host);
+    expect(b.root.activeElement).toBe(b.frame);
+  });
+
+  it("cancel on the top dialog closes only that embed, and focus moves to the one below", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const a = open({ onClose: first });
+    const b = open({ onClose: second });
+    cancel(b.modal);
+    expect(second).toHaveBeenCalledOnce();
+    expect(first).not.toHaveBeenCalled();
+    expect(hosts()).toEqual([a.host]);
+    expect((a.modal as HTMLDialogElement).open).toBe(true);
+    expect(a.root.activeElement).toBe(a.frame);
+    expect(document.documentElement.style.overflow).toBe("hidden");
+  });
+
+  it("undoes a zoom on the page, so the overlay keeps its own size", () => {
+    document.documentElement.style.setProperty("zoom", "0.8");
+    document.body.style.setProperty("zoom", "1.5");
+    try {
+      const { host } = open();
+      expect(Number(host.style.getPropertyValue("zoom"))).toBeCloseTo(1 / 1.2, 6);
+      expect(host.style.getPropertyPriority("zoom")).toBe("important");
+    } finally {
+      document.documentElement.style.removeProperty("zoom");
+      document.documentElement.removeAttribute("style");
+      document.body.removeAttribute("style");
+    }
+  });
+
+  it("sets no zoom on an unzoomed page", () => {
+    const { host } = open();
+    expect(host.style.getPropertyValue("zoom")).toBe("");
+  });
+
+  describe("without HTMLDialogElement.showModal", () => {
+    const prototype = HTMLDialogElement.prototype as Partial<HTMLDialogElement>;
+    const showModal = prototype.showModal;
+
+    beforeEach(() => {
+      delete prototype.showModal;
+    });
+
+    afterEach(() => {
+      prototype.showModal = showModal;
+    });
+
+    it("falls back to the fixed host, with the panel as the labelled modal dialog", () => {
+      const { root, host, modal, dialog, overlay, post } = open();
+      expect(root.querySelector("dialog")).toBeNull();
+      expect(modal).toBe(dialog);
+      expect(overlay.parentNode).toBe(root);
+      expect(dialog.getAttribute("role")).toBe("dialog");
+      expect(dialog.getAttribute("aria-modal")).toBe("true");
+      expect(dialog.getAttribute("aria-label")).toBe("SignPage");
+      expect(dialog.getAttribute("aria-busy")).toBe("true");
+      expect(host.style.getPropertyValue("position")).toBe("fixed");
+      expect(host.style.getPropertyValue("z-index")).toBe("2147483000");
+      post("ready", { title: "Addendum" });
+      expect(dialog.getAttribute("aria-label")).toBe("Addendum");
+      expect(dialog.hasAttribute("aria-busy")).toBe(false);
+    });
+
+    it("still closes on Esc and the X, and keeps focus in the overlay", () => {
+      const onClose = vi.fn();
+      const outside = document.createElement("input");
+      document.body.append(outside);
+      const a = open({ onClose });
+      outside.focus();
+      expect(a.root.activeElement).toBe(a.frame);
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(hosts()).toHaveLength(0);
+      open({ onClose }).closeButton.click();
+      expect(hosts()).toHaveLength(0);
+      expect(onClose).toHaveBeenCalledTimes(2);
+    });
+  });
 });
 
 describe("messages", () => {
   it("ready: shows the frame, labels the dialog and iframe with the title, calls onReady once", () => {
     const onReady = vi.fn();
-    const { dialog, frame, closeButton, post } = open({ onReady });
+    const { modal, frame, closeButton, post } = open({ onReady });
     post("ready", { title: "AI Processing Addendum" });
     expect(getComputedStyle(frame).opacity).toBe("1");
     expect(closeButton.isConnected).toBe(true);
-    expect(dialog.hasAttribute("aria-busy")).toBe(false);
-    expect(dialog.getAttribute("aria-label")).toBe("AI Processing Addendum");
+    expect(modal.hasAttribute("aria-busy")).toBe(false);
+    expect(modal.getAttribute("aria-label")).toBe("AI Processing Addendum");
     expect(frame.title).toBe("AI Processing Addendum");
     post("ready", { title: "AI Processing Addendum" });
     expect(onReady).toHaveBeenCalledOnce();
   });
 
   it("ready without a usable title keeps the fallback label", () => {
-    const { dialog, post } = open();
+    const { modal, post } = open();
     post("ready", { title: 42 });
-    expect(dialog.getAttribute("aria-label")).toBe("SignPage");
+    expect(modal.getAttribute("aria-label")).toBe("SignPage");
     post("ready");
-    expect(dialog.getAttribute("aria-label")).toBe("SignPage");
+    expect(modal.getAttribute("aria-label")).toBe("SignPage");
   });
 
   it("signed: calls onSigned once and keeps the modal open on the frame's confirmation", () => {

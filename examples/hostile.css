@@ -45,3 +45,76 @@ path {
 .skeleton {
   display: none !important;
 }
+
+/*
+ * Ancestors that capture `position: fixed`, clip, and zoom. `?hostile` zooms
+ * html and body 1.5 each (2.25 in all), `?hostile=zoom-out` zooms html 0.8,
+ * and `?hostile=no-zoom` leaves zoom out.
+ */
+html,
+body {
+  transform: translateZ(0) !important;
+  filter: blur(0) !important;
+  contain: paint !important;
+  will-change: transform !important;
+  zoom: 1.5;
+}
+
+html.zoom-out {
+  zoom: 0.8;
+}
+
+html.zoom-out body,
+html.no-zoom,
+html.no-zoom body {
+  zoom: 1;
+}
+
+html {
+  overflow: hidden !important;
+}
+
+body > * {
+  position: static !important;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: content-box !important;
+  transition: all 5s !important;
+  animation: none !important;
+}
+
+/* Rules aimed at a modal <dialog>, and at the top layer. */
+dialog {
+  display: none !important;
+  opacity: 0 !important;
+  transform: scale(0.5) !important;
+}
+
+dialog::backdrop,
+::backdrop {
+  background: red !important;
+}
+
+[open],
+:modal {
+  display: none !important;
+}
+
+/* A cookie banner at the highest z-index there is, over the top of the page. */
+#cookie-banner {
+  display: block !important;
+  position: fixed !important;
+  top: 0 !important;
+  right: 0 !important;
+  left: 0 !important;
+  height: 120px !important;
+  padding: 16px !important;
+  border: 0 !important;
+  transform: none !important;
+  background: #111 !important;
+  color: #fff !important;
+  z-index: 2147483647 !important;
+}

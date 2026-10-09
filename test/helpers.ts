@@ -24,7 +24,10 @@ export interface Harness {
   /** The shadow host on document.body. */
   host: HTMLElement;
   root: ShadowRoot;
+  /** The element assistive technology reads as the modal dialog: the top layer's `<dialog>`, or the panel without one. */
+  modal: HTMLElement;
   overlay: HTMLElement;
+  /** The panel holding the frame, the skeleton and the close button. */
   dialog: HTMLElement;
   frame: HTMLIFrameElement;
   closeButton: HTMLButtonElement;
@@ -68,8 +71,9 @@ export function open(options: Partial<OpenSignPageOptions> = {}): Harness {
   opened.push(embed);
   const host = hosts().at(-1)!;
   const root = rootOf(host);
+  const modal = root.querySelector<HTMLElement>('dialog, [role="dialog"]')!;
   const overlay = root.querySelector<HTMLElement>(".overlay")!;
-  const dialog = root.querySelector<HTMLElement>('[role="dialog"]')!;
+  const dialog = root.querySelector<HTMLElement>(".dialog")!;
   const frame = root.querySelector("iframe")!;
   const closeButton = root.querySelector<HTMLButtonElement>("button")!;
   const frameWindow = stubFrameWindow(frame);
@@ -88,6 +92,7 @@ export function open(options: Partial<OpenSignPageOptions> = {}): Harness {
     embed,
     host,
     root,
+    modal,
     overlay,
     dialog,
     frame,

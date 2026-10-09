@@ -39,8 +39,21 @@ the work like this, and talk only through `postMessage`.
 appends to `document.body`. Your page's stylesheets cannot reach inside it, and
 the host element itself is styled inline with `all: initial` and `!important`,
 so rules like `* { all: unset }`, `div { … !important }` or `iframe { display:
-none !important }` leave it alone. Inside, a dialog holds the SignPage's
-`<iframe>`, a skeleton of the SignPage while it loads, and the close button.
+none !important }` leave it alone. Inside, a native `<dialog>` opened with
+`showModal()` holds the SignPage's `<iframe>`, a skeleton of the SignPage while
+it loads, and the close button.
+
+**The top layer.** `showModal()` puts the dialog in the browser's top layer,
+above everything on your page whatever its `z-index`, so a cookie banner at
+`2147483647` cannot cover it. The top layer is sized by the viewport, so a
+`transform`, `filter`, `perspective`, `contain` or `will-change` on `html`,
+`body` or any other ancestor does not move or resize it, and the rest of your
+page is inert while it is open. Because the dialog is inside the shadow root,
+rules like `dialog { display: none !important }`, `[open]`, `:modal` or
+`dialog::backdrop` on your page do not match it; connie-js draws its own
+backdrop. A `zoom` on `html` or `body` is undone on the host, so the modal keeps
+its size. In a browser without `showModal()` the host itself is the fixed,
+full-viewport overlay instead.
 
 **The header band.** The SignPage's first 56px are its header band: a fixed,
 non-scrolling row with the title on the left and 16px of side padding, white,
@@ -66,7 +79,9 @@ motion. The dialog is `aria-busy` until then.
 
 **Esc.** connie-js closes the modal on Esc while focus is on your page or its
 close button. While focus is inside the SignPage, the SignPage handles Esc: it
-closes its own popovers first, and otherwise asks connie-js to close.
+closes its own popovers first, and otherwise asks connie-js to close. Any other
+close request the browser sends the dialog, such as Android's back gesture,
+closes it the same way, and `onClose` fires once.
 
 **Messages.** The SignPage posts
 `{ source: "connie-js", v: 1, embedId, type, payload }` to your page's origin.
@@ -316,7 +331,8 @@ for your account.
 - **No `style-src` change.** connie-js needs nothing from your `style-src`:
   it sets its styles through the CSSOM (a constructed stylesheet adopted into
   its shadow root, and `element.style`), which CSP does not restrict, so
-  neither `'unsafe-inline'` nor a hash is needed.
+  neither `'unsafe-inline'` nor a hash is needed. The top layer is reached
+  through `showModal()`, a DOM call, not markup.
 - **No `connect-src` or `img-src` change.** Everything the SignPage loads is
   governed by Connie's CSP, not yours.
 - **Nonces and `'strict-dynamic'`.** If your policy uses `'strict-dynamic'`,
@@ -357,8 +373,10 @@ link instead. Use connie-js for SignPages that offer an eID.
 
 ## Accessibility and mobile
 
-The modal follows the WAI-ARIA dialog pattern: it is a labelled
-`role="dialog"` with `aria-modal="true"`, focus moves into it when it opens and
+The modal follows the WAI-ARIA dialog pattern: it is a labelled native modal
+`<dialog>`, which assistive technology reads as one modal dialog, with
+the rest of the page inert behind it (`role="dialog"` with `aria-modal="true"`
+in a browser without `showModal()`). Focus moves into it when it opens and
 stays there, Esc closes it, and focus returns to where it was when it closes.
 The page behind it does not scroll. Below 640px wide it fills the screen, and
 keeps clear of notches and home indicators (`env(safe-area-inset-*)`, when your
@@ -388,7 +406,9 @@ npm run example   # serves examples/ at http://localhost:5173/examples/
 
 The example page runs under a strict CSP and comes with a mock SignPage on a
 second origin, so you can try every event without a Connie account. Open
-`?hostile` to load an aggressive host stylesheet first, and add
+`?hostile` to load an aggressive host stylesheet first, with a cookie banner at
+the highest `z-index` and a transformed, filtered, contained page zoomed 2.25×
+(`?hostile=zoom-out` zooms it 0.8× and `?hostile=no-zoom` not at all), and add
 `?ready_after=<ms>` to change how long the mock holds back `ready`.
 
 ## License

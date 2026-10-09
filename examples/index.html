@@ -14,7 +14,10 @@
       <p>
         Paste a session URL minted with <code>POST /v1/sign_pages/:id/embed_sessions</code>, or keep
         the mock SignPage, which runs on another origin and exercises every event. Open
-        <a href="?hostile">?hostile</a> to load an aggressive host stylesheet first.
+        <a href="?hostile">?hostile</a> to load an aggressive host stylesheet first, with a cookie
+        banner and a zoomed, transformed page, or
+        <a href="?hostile=zoom-out">?hostile=zoom-out</a> and
+        <a href="?hostile=no-zoom">?hostile=no-zoom</a> for other zooms.
       </p>
       <label for="url">Session URL</label>
       <input id="url" type="url" />

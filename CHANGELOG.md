@@ -6,6 +6,17 @@ All notable changes to `@getconnie/connie-js` and the hosted script at
 
 ## 1.1.0
 
+- The modal is a native `<dialog>` in the browser's top layer, opened with
+  `showModal()` inside the closed shadow root. A cookie banner or any other
+  element at the highest `z-index` no longer covers it, and a `transform`,
+  `filter`, `perspective`, `contain` or `will-change` on `html`, `body` or any
+  other ancestor no longer moves or resizes it. The page behind is inert while
+  it is open. A `zoom` on `html` or `body` is undone, so the modal keeps its
+  size. Browsers without `showModal()` keep the fixed overlay.
+- The modal is announced as one native modal dialog, labelled with the
+  SignPage's title. A close request from the browser, such as Android's back
+  gesture, closes it like Esc.
+- Focus goes back to where it was on close without scrolling the page.
 - The modal lives in a closed Shadow DOM on a single element appended to
   `document.body`, styled by a constructed stylesheet adopted into the shadow
   root. The host page's CSS, including `* { all: unset }` and `!important`

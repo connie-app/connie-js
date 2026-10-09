@@ -73,6 +73,7 @@ export const COLUMN = {
 } as const;
 
 export type Part =
+  | "top"
   | "overlay"
   | "dialog"
   | "frame"
@@ -113,6 +114,7 @@ const inset = ([top, side]: readonly [number, number]): string => `padding:${top
  * modify. A property may repeat as a fallback for older engines.
  */
 const BASE: Record<Part, string> = {
+  top: `all:initial;display:block;position:fixed;inset:0;width:100%;height:100vh;height:100dvh;max-width:none;max-height:none;margin:0;padding:0;border:0;overflow:visible;background:transparent;outline:0`,
   overlay: `position:absolute;inset:0;display:flex;align-items:center;justify-content:center;margin:0;padding:24px;box-sizing:border-box;background:${COLORS.backdrop}`,
   dialog: `position:relative;width:100%;max-width:760px;height:100%;max-height:900px;margin:0;padding:0;box-sizing:border-box;overflow:hidden;background:${COLORS.surface};border-radius:12px;box-shadow:0 24px 64px rgba(0,0,0,.3)`,
   frame: `position:absolute;inset:0;z-index:0;display:block;width:100%;height:100%;margin:0;padding:0;border:0;opacity:0;transition:opacity ${FADE_MS}ms ease`,
@@ -146,8 +148,8 @@ const NARROW: Partial<Record<Part, string>> = {
 /**
  * The shadow host. `all: initial` cuts it off from everything the page could
  * set or pass down, and the rest makes it the fixed, full-viewport box the
- * overlay fills. Applied inline with `!important`, which no page stylesheet
- * can beat.
+ * overlay fills where there is no top layer. Applied inline with `!important`,
+ * which no page stylesheet can beat.
  */
 const HOST = `all:initial;display:block;position:fixed;top:0;right:0;left:0;height:100vh;height:100dvh;margin:0;padding:0;border:0;z-index:${Z_INDEX}`;
 
@@ -159,6 +161,7 @@ const rules = (parts: Partial<Record<Part, string>>): string =>
 export const CSS =
   rules(BASE) +
   LINE_WIDTHS.map((w, i) => `.line:nth-child(${i + 2}){width:${w}%}`).join("") +
+  `.top::backdrop{background:transparent}` +
   `.close:hover{background:${COLORS.hover}}` +
   `.close:focus{outline:0}` +
   `.close:focus-visible{outline:2px solid ${COLORS.focus};outline-offset:2px}` +
@@ -208,13 +211,27 @@ export interface Styler {
 }
 
 /**
+ * The zoom `el` is drawn at: CSS multiplies `zoom` down the tree, and into the
+ * top layer too. Read from computed styles, which every engine reports, where
+ * `currentCSSZoom` is Chromium and Firefox only.
+ */
+function zoomOf(el: Element | null): number {
+  let zoom = 1;
+  for (; el; el = el.parentElement) zoom *= parseFloat(getComputedStyle(el).zoom) || 1;
+  return zoom;
+}
+
+/**
  * Creates the shadow host with a closed root, styled, and returns a `Styler`
- * for the elements that go inside it.
+ * for the elements that go inside it. A `zoom` on the host's ancestors is
+ * undone on the host, so the overlay keeps its own size on a zoomed page.
  */
 export function shadow(doc: Document): { host: HTMLElement; root: ShadowRoot; styler: Styler } {
   const host = doc.createElement("div");
   host.setAttribute("data-connie-js", "");
   apply(host, HOST);
+  const zoom = zoomOf(doc.body);
+  if (zoom !== 1) host.style.setProperty("zoom", String(1 / zoom), "important");
   const root = host.attachShadow({ mode: "closed" });
   const sheet = adopt(root);
   // Inline, the dialog is full screen at every width, so the frame is as wide as the window.

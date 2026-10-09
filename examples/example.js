@@ -37,12 +37,21 @@ document.getElementById("open-two").addEventListener("click", () => {
 });
 
 // ?hostile loads a stylesheet with the rules an aggressive host page might
-// ship, and opens a SignPage at once, since it hides this page's own buttons.
+// ship, puts a cookie banner over the page, and opens a SignPage at once,
+// since it hides this page's own buttons. ?hostile=zoom-out and
+// ?hostile=no-zoom change only the page's zoom.
 if (query.has("hostile")) {
+  const variant = query.get("hostile");
+  if (variant) document.documentElement.classList.add(variant);
+  const banner = document.createElement("div");
+  banner.id = "cookie-banner";
+  banner.textContent = "We use cookies. This banner sits at z-index 2147483647.";
+  document.body.append(banner);
   const link = document.createElement("link");
   link.rel = "stylesheet";
   link.href = "hostile.css";
   link.addEventListener("load", () => {
+    input.focus();
     Connie.openSignPage({ url: input.value, ...callbacks("hostile") });
   });
   document.head.append(link);
