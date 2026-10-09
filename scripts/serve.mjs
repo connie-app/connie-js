@@ -33,6 +33,11 @@ const FRAME_CSP = [
 
 createServer(async (req, res) => {
   const path = normalize(decodeURIComponent(new URL(req.url, "http://x").pathname));
+  // Stands in for the eID flow, which ends back on the example page.
+  if (path.startsWith("/openid/authorize/")) {
+    res.writeHead(302, { location: "/examples/index.html?eid=1" }).end();
+    return;
+  }
   const file = join(root, path.endsWith("/") ? join(path, "index.html") : path);
   if (!file.startsWith(join(root, "examples")) && !file.startsWith(join(root, "dist"))) {
     res.writeHead(404).end("not found");

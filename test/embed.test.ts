@@ -69,6 +69,41 @@ describe("the iframe", () => {
     expect(frame.hasAttribute("sandbox")).toBe(false);
     expect(frame.title).toBe("SignPage");
   });
+
+  it("sends only the host page's origin as the referrer", () => {
+    const { frame } = open();
+    expect(frame.referrerPolicy).toBe("strict-origin");
+    expect(frame.getAttribute("referrerpolicy")).toBe("strict-origin");
+  });
+
+  it.each([
+    ["url", () => open()],
+    ["fetchUrl", () => open({ fetchUrl: () => Promise.resolve(SESSION_URL) })],
+  ])(
+    "is inserted with its src already set, which WebKit needs to apply the policy (%s)",
+    async (_name, opener) => {
+      const proto = HTMLIFrameElement.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(proto, "src")!;
+      const connectedOnSet: boolean[] = [];
+      Object.defineProperty(proto, "src", {
+        ...descriptor,
+        set(this: HTMLIFrameElement, value: string) {
+          connectedOnSet.push(this.isConnected);
+          descriptor.set!.call(this, value);
+        },
+      });
+      try {
+        const { frame, dialog, root } = opener();
+        await flush();
+        expect(frame.src).toMatch(/^https:\/\/sign\.page\/embed\/cs_test_123\?embed_id=/);
+        expect(connectedOnSet).toEqual([false]);
+        expect(dialog.firstElementChild).toBe(frame);
+        expect(root.activeElement).toBe(frame);
+      } finally {
+        Object.defineProperty(proto, "src", descriptor);
+      }
+    },
+  );
 });
 
 describe("the overlay", () => {
@@ -814,12 +849,30 @@ describe("messages", () => {
     for (const fn of Object.values(callbacks)) expect(fn).not.toHaveBeenCalled();
   });
 
+  it("navigate: follows the eID handoff on a loopback http frame", () => {
+    const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+    const local = "http://sign.connie.localhost:4000";
+    open({ url: `${local}/embed/x` }).post(
+      "navigate",
+      { url: `${local}/openid/authorize/s` },
+      { origin: local },
+    );
+    expect(assign).toHaveBeenCalledWith("http://sign.connie.localhost:4000/openid/authorize/s");
+  });
+
   it.each([
     ["another origin", "https://evil.example/openid/authorize/x"],
     ["plain http on the frame's host", "http://sign.page/openid/authorize/x"],
     ["javascript:", "javascript:alert(document.domain)"],
     ["a relative url", "/openid/authorize/x"],
     ["a non-string", 12],
+    ["another path on the frame's origin", `${FRAME_ORIGIN}/embed/other_session`],
+    ["the frame's origin root", `${FRAME_ORIGIN}/`],
+    ["the handoff path without its trailing slash", `${FRAME_ORIGIN}/openid/authorize`],
+    ["a path that only starts like the handoff", `${FRAME_ORIGIN}/openid/authorizex/y`],
+    ["a dot segment out of the handoff", `${FRAME_ORIGIN}/openid/authorize/../../embed/x`],
+    ["an encoded dot segment", `${FRAME_ORIGIN}/openid/authorize/%2e%2e/%2E%2E/embed/x`],
+    ["credentials on the frame's origin", "https://u:p@sign.page/openid/authorize/x"],
   ])("navigate: ignores %s", (_name, url) => {
     const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
     open().post("navigate", { url });
