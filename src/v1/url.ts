@@ -31,6 +31,26 @@ export function withEmbedId(url: URL, embedId: string): string {
   return framed.href;
 }
 
+/**
+ * The frame URL of a SignPage's website embed, for its public link `href`
+ * (`https://sign.page/EA0990`) opened from `page`: `/<pin>/embed` on the
+ * link's own host, so a custom domain is kept, with the page's origin, which
+ * the SignPage must allow, and the page's origin and path as where "Back to"
+ * returns after an eID. The page's query and fragment are never sent.
+ */
+export function signPageFrameUrl(href: URL, page: { origin: string; pathname: string }): string {
+  const segment = href.pathname.replace(/^\/|\/$/g, "");
+  return (
+    href.origin +
+    "/" +
+    segment +
+    "/embed?origin=" +
+    encodeURIComponent(page.origin) +
+    "&return_url=" +
+    encodeURIComponent(page.origin + page.pathname)
+  );
+}
+
 export function randomId(): string {
   const c = globalThis.crypto;
   if (c && typeof c.randomUUID === "function") return c.randomUUID();

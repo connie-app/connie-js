@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseAllowedUrl, randomId, withEmbedId } from "../src/v1/url.js";
+import { parseAllowedUrl, randomId, signPageFrameUrl, withEmbedId } from "../src/v1/url.js";
 
 describe("parseAllowedUrl", () => {
   it.each([
@@ -75,5 +75,39 @@ describe("randomId", () => {
   it("falls back to Math.random without crypto", () => {
     vi.stubGlobal("crypto", undefined);
     expect(randomId()).toMatch(/^[0-9a-f]{32}$/);
+  });
+});
+
+describe("signPageFrameUrl", () => {
+  const page = { origin: "https://www.example.com", pathname: "/membership/join" };
+
+  it("frames /<pin>/embed on the link's host, with the page's origin and path", () => {
+    expect(signPageFrameUrl(new URL("https://sign.page/EA0990"), page)).toBe(
+      "https://sign.page/EA0990/embed?origin=https%3A%2F%2Fwww.example.com" +
+        "&return_url=https%3A%2F%2Fwww.example.com%2Fmembership%2Fjoin",
+    );
+  });
+
+  it("drops a trailing slash from the link", () => {
+    expect(signPageFrameUrl(new URL("https://sign.page/EA0990/"), page)).toMatch(
+      /^https:\/\/sign\.page\/EA0990\/embed\?/,
+    );
+  });
+
+  it("keeps a custom domain and its port", () => {
+    expect(signPageFrameUrl(new URL("https://sign.customer.com:8443/EA0990"), page)).toMatch(
+      /^https:\/\/sign\.customer\.com:8443\/EA0990\/embed\?/,
+    );
+  });
+
+  it("keeps the segment as the link encodes it, and encodes the page's path", () => {
+    const url = signPageFrameUrl(new URL("https://sign.page/a%20b"), {
+      origin: "http://localhost:3000",
+      pathname: "/a b/&?",
+    });
+    expect(url).toBe(
+      "https://sign.page/a%20b/embed?origin=http%3A%2F%2Flocalhost%3A3000" +
+        "&return_url=http%3A%2F%2Flocalhost%3A3000%2Fa%20b%2F%26%3F",
+    );
   });
 });

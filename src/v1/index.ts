@@ -1,5 +1,6 @@
 import type { ConnieJs } from "../types.js";
 import { openSignPage } from "./embed.js";
+import { enhanceLinks } from "./links.js";
 
 declare const __VERSION__: string;
 
@@ -7,8 +8,11 @@ declare const __VERSION__: string;
 // global with a callable `openSignPage` counts as connie-js already loaded.
 // Defining the property shadows such an element, and `writable: false` keeps a
 // later script from swapping it with an ordinary assignment. A global the page
-// declared with `var Connie` cannot be redefined, only assigned.
+// declared with `var Connie` cannot be redefined, only assigned. Links marked
+// `data-connie-signpage` are enhanced by the copy that defines it, so a page
+// loading the script twice opens one modal per click.
 if (typeof window.Connie?.openSignPage !== "function") {
+  enhanceLinks(document);
   const connie: ConnieJs = Object.freeze({ openSignPage, version: __VERSION__ });
   try {
     Object.defineProperty(window, "Connie", {

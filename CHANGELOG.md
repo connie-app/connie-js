@@ -4,6 +4,26 @@ All notable changes to `@getconnie/connie-js` and the hosted script at
 `https://assets.getconnie.com/js/v1.js` are recorded here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 1.2.0
+
+- A link marked `data-connie-signpage` to a SignPage's public link
+  (`https://sign.page/EA0990`, or the account's own sign domain) opens that
+  SignPage in the modal, with no API key, no backend and no code: load the
+  hosted script and add the attribute. The SignPage is framed at
+  `/<pin>/embed` on the link's host, and Connie shows it only on the websites
+  the SignPage's owner has allowed. When it refuses (`not_allowed`, or any other
+  `error`), the visitor goes to the link's own page, as they would without the
+  script.
+- One `click` listener on `document` handles every such link, including links
+  added later. A click with a modifier key, any button but the main one, a
+  link with a `target` other than `_self`, a click the page already handled
+  and a link that is not one path segment on an `https` host (or `http` on a
+  loopback host) are left to the browser, so they open the link as usual.
+- For these links the frame's URL carries the page's origin and path, never
+  its query or fragment, so "Back to" after an eID can return to the same
+  page. The frame's referrer stays the origin only.
+- `openSignPage` is unchanged.
+
 ## 1.1.0
 
 - The modal is a native `<dialog>` in the browser's top layer, opened with
