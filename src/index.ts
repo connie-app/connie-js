@@ -9,6 +9,14 @@ export type {
 } from "./types.js";
 
 export interface LoadConnieOptions {
+  /**
+   * Sign hosts besides `sign.page` whose `data-connie-signpage` links open in
+   * the modal, such as your account's own sign domain: written to the script
+   * tag's `data-connie-hosts`. Applies only when `loadConnie()` adds the tag;
+   * a tag already on the page, or a `window.Connie` already loaded, keeps its
+   * own list.
+   */
+  hosts?: readonly string[];
   /** Internal: loads the script from another Connie environment. */
   scriptUrl?: string;
 }
@@ -92,6 +100,7 @@ export function loadConnie(options: LoadConnieOptions = {}): Promise<ConnieJs | 
     });
     script.addEventListener("error", () => fail("Failed to load Connie.js from " + src));
     if (injected) {
+      if (options.hosts?.length) script.setAttribute("data-connie-hosts", options.hosts.join(" "));
       script.src = scriptUrl(src);
       script.async = true;
       (document.head || document.body).append(script);
