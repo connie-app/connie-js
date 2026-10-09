@@ -119,17 +119,23 @@ does, you need no API key, no backend and no npm. Paste two lines:
   at `https://sign.page/<PIN>`. If your account signs on its own domain, list
   that host on the script tag:
   `<script src="https://assets.getconnie.com/js/v1.js" data-connie-hosts="sign.customer.com" defer></script>`
-  (several hosts separated by spaces or commas, a port where there is one).
-  Any other link is an ordinary link.
+  (several hosts separated by spaces or commas, a port where there is one; an
+  internationalised domain may be written as it reads). With `loadConnie()`,
+  pass them as `loadConnie({ hosts: ["sign.customer.com"] })`. Any other link
+  is an ordinary link. List the same hosts in your CSP's `frame-src` (see
+  [Content Security Policy](#content-security-policy)).
 - **Without JavaScript it is an ordinary link** to the SignPage. With connie-js,
   a click opens the same modal as `openSignPage`. A click with Ctrl, Cmd, Shift
-  or Alt, a middle click, and a link with `target="_blank"` open the link as
-  usual. Links added to the page later work too.
+  or Alt, a middle click, a link with `target="_blank"`, and a click a script
+  makes (`link.click()`) rather than the visitor open the link as usual. Links
+  added to the page later work too.
 - **eID** leaves your page at the submit step, as below, and "Back to" on the
   signed page returns to your website's home page.
 - **If the SignPage can't be shown** (your website is not on its list, or the
-  SignPage is not accepting signatures), the visitor goes to the SignPage's own
-  page instead.
+  SignPage is not accepting signatures), or it has not loaded within 15
+  seconds (your CSP's `frame-src` leaves out its host, say), the modal closes
+  and the visitor goes to the SignPage's own page instead: the address the
+  link had when it was clicked.
 - **What Connie learns.** The frame's URL carries your page's origin only:
   never its path, query or fragment.
 - No metadata, prefill or locks: those need an embed session, below.
@@ -277,7 +283,7 @@ the modal yourself (when your component unmounts, for example).
 ## API
 
 ```ts
-loadConnie(): Promise<ConnieJs | null>
+loadConnie(options?: { hosts?: string[] }): Promise<ConnieJs | null>
 
 connie.openSignPage(options: OpenSignPageOptions): SignPageEmbed
 connie.version: string
@@ -300,6 +306,11 @@ interface ConnieEmbedError {
   message: string;
 }
 ```
+
+`hosts` are the sign hosts besides `sign.page` whose `data-connie-signpage`
+links open in the modal, written to the script tag's `data-connie-hosts`. They
+apply only when `loadConnie()` adds the tag: a tag already on the page, or a
+`window.Connie` already loaded, keeps its own list.
 
 Pass exactly one of `url` and `fetchUrl`. `openSignPage` throws a `TypeError`
 straight away when you pass neither or both, or a `url` that is not `https`
@@ -366,6 +377,10 @@ frame-src  https://sign.page;
 same host also serves files uploaded to Connie. If your account signs on a
 custom domain, use that domain in `frame-src` instead of `sign.page`; the
 origin of the session `url` the Connie API returns is exactly your sign host.
+With `data-connie-signpage` links, list `https://sign.page` and every host in
+your `data-connie-hosts`, and nothing else: `frame-src` is what holds the
+modal to Connie's sign hosts if someone manages to put markup on your page
+(see [Security](#security)).
 
 - **No `style-src` change.** connie-js needs nothing from your `style-src`:
   it sets its styles through the CSSOM (a constructed stylesheet adopted into
@@ -416,11 +431,22 @@ What connie-js trusts, and what it does not:
   the frame's URL too, and nothing else of its address.
 - **Links are framed only on Connie's sign hosts:** `sign.page`, and the hosts
   your own script tag lists in `data-connie-hosts`. Trust is never taken from
-  a link, so markup someone else can write on your page (a comment, a
-  profile) cannot have connie-js frame another site, hand it the camera
-  (`allow="camera"`), or let it ask for a `navigate`. `openSignPage({url})` is
-  not limited this way, because its URL comes from your own backend (see
-  above).
+  a link, and the list is read from the `<script>` element actually running,
+  never from an element that only claims the name (an `<img
+name="currentScript">` or `<form name="currentScript">` that shadows
+  `document.currentScript`). So a link in markup someone else writes on your
+  page (a comment, a profile) cannot have connie-js frame another site, hand
+  it the camera (`allow="camera"`), or let it ask for a `navigate`. Only a
+  click the visitor makes opens the modal; a script's `click()` follows the
+  link as an ordinary one. If an earlier copy of the script is already on the
+  page, its list is the one in force, and a later copy whose tag lists other
+  hosts warns in the console. Injected markup that can add its own
+  `<script src=".../v1.js" data-connie-hosts="...">` ahead of yours (your
+  `script-src` allows that exact URL) can choose the list, so the allowlist
+  holds against injected markup only together with a `frame-src` that names
+  just `https://sign.page` and your own sign hosts: the browser then refuses
+  to frame anything else. `openSignPage({url})` is not limited this way,
+  because its URL comes from your own backend (see above).
 - **`window.Connie`.** The hosted script defines it read-only. An element with
   `id="Connie"` on your page is never mistaken for it, by the script or by
   `loadConnie()`.

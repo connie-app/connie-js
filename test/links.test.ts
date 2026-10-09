@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { allowedHosts, enhanceLinks } from "../src/v1/links.js";
+import { allowedHosts, enhanceLinks, READY_TIMEOUT_MS, runningScript } from "../src/v1/links.js";
 import { frameOf, hosts, rootOf, stubFrameWindow } from "./helpers.js";
 
 // The script tag a site's author writes, listing their custom sign domain and
@@ -42,8 +42,25 @@ function link(href: string, attrs: Record<string, string> = {}): HTMLAnchorEleme
   return a;
 }
 
-function click(target: Element, init: MouseEventInit = {}): void {
-  target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...init }));
+/**
+ * A click as the visitor makes it. Browsers mark those `isTrusted`, and a
+ * click a script dispatches not; happy-dom marks none, so the test does.
+ */
+function click(target: Element, init: MouseEventInit = {}, trusted = true): void {
+  const event = new MouseEvent("click", { bubbles: true, cancelable: true, ...init });
+  if (trusted) Object.defineProperty(event, "isTrusted", { value: true });
+  target.dispatchEvent(event);
+}
+
+/** Posts a message to the page as the SignPage in `frame` would. */
+function post(frame: HTMLIFrameElement, type: string, payload: unknown = {}): void {
+  window.dispatchEvent(
+    new MessageEvent("message", {
+      data: { source: "connie-js", v: 1, embedId: embedIdOf(frame), type, payload },
+      origin: new URL(frame.src).origin,
+      source: stubFrameWindow(frame),
+    } as MessageEventInit),
+  );
 }
 
 const embedIdOf = (frame: HTMLIFrameElement) => new URL(frame.src).searchParams.get("embed_id")!;
@@ -186,23 +203,74 @@ describe("data-connie-signpage links", () => {
   it("go to the SignPage's own page when the embed fails", () => {
     const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
     click(link("https://sign.page/EA0990"));
-    const frame = frameOf(hosts()[0]);
-    const frameWindow = stubFrameWindow(frame);
-    window.dispatchEvent(
-      new MessageEvent("message", {
-        data: {
-          source: "connie-js",
-          v: 1,
-          embedId: embedIdOf(frame),
-          type: "error",
-          payload: { code: "not_allowed", message: "m" },
-        },
-        origin: "https://sign.page",
-        source: frameWindow,
-      } as MessageEventInit),
-    );
+    post(frameOf(hosts()[0]), "error", { code: "not_allowed", message: "m" });
     expect(hosts()).toHaveLength(0);
     expect(assign).toHaveBeenCalledWith("https://sign.page/EA0990");
+  });
+
+  it("go to the address checked at the click when the embed fails, though the href changed since", () => {
+    const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+    const a = link("https://sign.page/EA0990");
+    click(a);
+    a.setAttribute("href", "javascript:void(window.pwned = true)");
+    post(frameOf(hosts()[0]), "error", { code: "not_allowed", message: "m" });
+    expect(assign).toHaveBeenCalledTimes(1);
+    expect(assign).toHaveBeenCalledWith("https://sign.page/EA0990");
+  });
+
+  it("open normally on a click a script dispatched, which the visitor did not make", () => {
+    click(link("https://sign.page/EA0990"), {}, false);
+    expect(prevented).toBe(false);
+    expect(hosts()).toHaveLength(0);
+  });
+
+  describe("that never get ready", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("close and go to the address checked at the click after READY_TIMEOUT_MS", () => {
+      const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+      const a = link("https://sign.customer.com/EA0990");
+      click(a);
+      a.setAttribute("href", "https://evil.example/phish");
+      vi.advanceTimersByTime(READY_TIMEOUT_MS - 1);
+      expect(hosts()).toHaveLength(1);
+      expect(assign).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(hosts()).toHaveLength(0);
+      expect(assign).toHaveBeenCalledTimes(1);
+      expect(assign).toHaveBeenCalledWith("https://sign.customer.com/EA0990");
+    });
+
+    it("stay open once the SignPage is ready", () => {
+      const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+      click(link("https://sign.page/EA0990"));
+      post(frameOf(hosts()[0]), "ready", { title: "t" });
+      vi.advanceTimersByTime(READY_TIMEOUT_MS * 2);
+      expect(hosts()).toHaveLength(1);
+      expect(assign).not.toHaveBeenCalled();
+    });
+
+    it("go nowhere once the visitor closed the modal", () => {
+      const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+      click(link("https://sign.page/EA0990"));
+      rootOf(hosts()[0]).querySelector<HTMLButtonElement>("button")!.click();
+      vi.advanceTimersByTime(READY_TIMEOUT_MS * 2);
+      expect(assign).not.toHaveBeenCalled();
+    });
+
+    it("go to the SignPage's own page once when it fails before the timeout", () => {
+      const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+      click(link("https://sign.page/EA0990"));
+      post(frameOf(hosts()[0]), "error", { code: "unavailable", message: "m" });
+      vi.advanceTimersByTime(READY_TIMEOUT_MS * 2);
+      expect(assign).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
@@ -225,5 +293,92 @@ describe("allowedHosts", () => {
       "sign.other.dk",
       "localhost:4002",
     ]);
+  });
+
+  it("normalises each listed host as a link's host is: punycode, no default port", () => {
+    expect([
+      ...allowedHosts(tag("sign.bücher.example sign.customer.com:443 local.localhost:4000")),
+    ]).toEqual([
+      "sign.page",
+      "sign.xn--bcher-kva.example",
+      "sign.customer.com",
+      "local.localhost:4000",
+    ]);
+  });
+
+  it("drops entries that are not a bare host", () => {
+    expect([
+      ...allowedHosts(
+        tag(
+          "evil.example/x user@evil.example evil.example?q evil.example#f bad:port [zz] sign.ok.dk",
+        ),
+      ),
+    ]).toEqual(["sign.page", "sign.ok.dk"]);
+  });
+});
+
+describe("runningScript", () => {
+  // The browser's own getter, stood in for on the document's prototype.
+  const proto = Object.getPrototypeOf(document);
+  const original = Object.getOwnPropertyDescriptor(proto, "currentScript");
+  let current: Element | null = null;
+
+  beforeEach(() => {
+    current = null;
+    Object.defineProperty(proto, "currentScript", { get: () => current, configurable: true });
+  });
+
+  afterEach(() => {
+    if (original) Object.defineProperty(proto, "currentScript", original);
+    else delete proto.currentScript;
+    delete (document as { currentScript?: unknown }).currentScript;
+  });
+
+  /**
+   * Makes `el` what `document.currentScript` returns, the way browsers expose
+   * an `<img name="currentScript">` or `<form name="currentScript">`: a named
+   * property on the document itself, ahead of the prototype's getter.
+   */
+  const clobber = (el: Element) => {
+    el.setAttribute("name", "currentScript");
+    el.setAttribute("data-connie-hosts", "evil.example");
+    document.body.append(el);
+    Object.defineProperty(document, "currentScript", { get: () => el, configurable: true });
+  };
+
+  it("is the script tag running", () => {
+    const script = document.createElement("script");
+    script.setAttribute("data-connie-hosts", "sign.customer.com");
+    current = script;
+    expect(runningScript(document)).toBe(script);
+    expect(allowedHosts(runningScript(document)).has("sign.customer.com")).toBe(true);
+  });
+
+  it.each([
+    ["an <img name=currentScript>", "img"],
+    ["a <form name=currentScript>", "form"],
+  ])("is not %s in the page's markup", (_name, tagName) => {
+    const script = document.createElement("script");
+    script.setAttribute("data-connie-hosts", "sign.customer.com");
+    current = script;
+    clobber(document.createElement(tagName));
+    expect(runningScript(document)).toBe(script);
+    expect([...allowedHosts(runningScript(document))]).toEqual(["sign.page", "sign.customer.com"]);
+  });
+
+  it.each([
+    ["an <img>", "img"],
+    ["a <form>", "form"],
+  ])("is null, never %s, whatever currentScript returns", (_name, tagName) => {
+    const el = document.createElement(tagName);
+    el.setAttribute("data-connie-hosts", "evil.example");
+    current = el;
+    expect(runningScript(document)).toBeNull();
+    expect([...allowedHosts(runningScript(document))]).toEqual(["sign.page"]);
+  });
+
+  it("is null while no script runs, even with a clobbering element", () => {
+    clobber(document.createElement("img"));
+    expect(runningScript(document)).toBeNull();
   });
 });

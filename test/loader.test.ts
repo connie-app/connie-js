@@ -164,6 +164,33 @@ describe("loadConnie", () => {
     await expect(promise).resolves.toBe(fakeConnie);
   });
 
+  it("lists hosts on the script tag it adds as data-connie-hosts", async () => {
+    const loadConnie = await loader();
+    const promise = loadConnie({ hosts: ["sign.customer.com", "sign.other.dk"] });
+    expect(appended[0].getAttribute("data-connie-hosts")).toBe("sign.customer.com sign.other.dk");
+    load(appended[0]);
+    await expect(promise).resolves.toBe(fakeConnie);
+  });
+
+  it("adds no data-connie-hosts without hosts", async () => {
+    const loadConnie = await loader();
+    loadConnie({ hosts: [] });
+    expect(appended[0].hasAttribute("data-connie-hosts")).toBe(false);
+  });
+
+  it("leaves a script tag already on the page with its own hosts", async () => {
+    const existing = document.createElement("script");
+    existing.src = DEFAULT_URL;
+    existing.setAttribute("data-connie-hosts", "sign.customer.com");
+    document.body.appendChild(existing);
+    const loadConnie = await loader();
+    const promise = loadConnie({ hosts: ["sign.other.dk"] });
+    expect(appended).toHaveLength(0);
+    expect(existing.getAttribute("data-connie-hosts")).toBe("sign.customer.com");
+    load(existing);
+    await expect(promise).resolves.toBe(fakeConnie);
+  });
+
   it("does not take an element with id Connie for window.Connie", async () => {
     clobber();
     const loadConnie = await loader();
