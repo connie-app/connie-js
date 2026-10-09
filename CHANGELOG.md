@@ -4,6 +4,47 @@ All notable changes to `@getconnie/connie-js` and the hosted script at
 `https://assets.getconnie.com/js/v1.js` are recorded here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 1.2.0
+
+- A link marked `data-connie-signpage` to a SignPage's public link
+  (`https://sign.page/EA0990`, or the account's own sign domain) opens that
+  SignPage in the modal, with no API key, no backend and no code: load the
+  hosted script and add the attribute. The SignPage is framed at
+  `/<pin>/embed` on the link's host, and Connie shows it only on the websites
+  the SignPage's owner has allowed. Only links to `sign.page`, or to a host the
+  script tag lists in `data-connie-hosts` (a custom sign domain), are
+  enhanced; trust is never taken from the link, so a link elsewhere is never
+  framed, given the camera or allowed a `navigate`. When it refuses (`not_allowed`, or any other
+  `error`), the visitor goes to the link's own page, as they would without the
+  script.
+- One `click` listener on `document` handles every such link, including links
+  added later. A click with a modifier key, any button but the main one, a
+  link with a `target` other than `_self`, a click the page already handled
+  and a link that is not one path segment on an allowed `https` host (or
+  `http` on a listed loopback host) are left to the browser, so they open the link as usual.
+- Only a click the visitor makes is enhanced (`isTrusted`); a click a script
+  dispatches, such as `link.click()`, opens the link as usual.
+- The list of hosts is read from the `<script>` element actually running, so
+  an `<img name="currentScript">` or `<form name="currentScript">` in the
+  page's markup, which shadows `document.currentScript`, can neither add hosts
+  nor take away the ones listed. Each listed host is normalised as a link's
+  host is, so an internationalised domain matches its punycode form; an entry
+  that is not a bare host is ignored. A second copy of the script whose tag
+  lists other hosts than the copy in force warns in the console.
+- `loadConnie({ hosts })` writes `data-connie-hosts` on the script tag it
+  adds.
+- When the embed fails, or the SignPage has not said it is `ready` within 15
+  seconds (a `frame-src` that leaves out a custom sign host, for one), the
+  modal closes and the visitor goes to the address the link had when it was
+  clicked, not whatever its `href` has become since.
+- The README's CSP and Security sections say what enforces the host list
+  against injected markup: a `frame-src` naming only `https://sign.page` and
+  your own sign hosts.
+- For these links the frame's URL carries the page's origin and nothing else
+  of its address; "Back to" after an eID returns to the website's home page.
+  The frame's referrer stays the origin only.
+- `openSignPage` is unchanged; the 15-second fallback applies only to links.
+
 ## 1.1.0
 
 - The modal is a native `<dialog>` in the browser's top layer, opened with

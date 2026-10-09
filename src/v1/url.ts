@@ -31,6 +31,18 @@ export function withEmbedId(url: URL, embedId: string): string {
   return framed.href;
 }
 
+/**
+ * The frame URL of a SignPage's website embed, for its public link `href`
+ * (`https://sign.page/EA0990`) opened from a page on `pageOrigin`:
+ * `/<pin>/embed` on the link's own host, with the page's origin, which the
+ * SignPage must allow. Nothing else of the page is sent: no path, query or
+ * fragment.
+ */
+export function signPageFrameUrl(href: URL, pageOrigin: string): string {
+  const segment = href.pathname.replace(/^\/|\/$/g, "");
+  return href.origin + "/" + segment + "/embed?origin=" + encodeURIComponent(pageOrigin);
+}
+
 export function randomId(): string {
   const c = globalThis.crypto;
   if (c && typeof c.randomUUID === "function") return c.randomUUID();
