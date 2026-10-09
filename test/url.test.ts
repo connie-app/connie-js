@@ -79,18 +79,17 @@ describe("randomId", () => {
 });
 
 describe("signPageFrameUrl", () => {
-  const page = { origin: "https://www.example.com", pathname: "/membership/join" };
+  const page = "https://www.example.com";
 
-  it("frames /<pin>/embed on the link's host, with the page's origin and path", () => {
+  it("frames /<pin>/embed on the link's host, with the page's origin and nothing else", () => {
     expect(signPageFrameUrl(new URL("https://sign.page/EA0990"), page)).toBe(
-      "https://sign.page/EA0990/embed?origin=https%3A%2F%2Fwww.example.com" +
-        "&return_url=https%3A%2F%2Fwww.example.com%2Fmembership%2Fjoin",
+      "https://sign.page/EA0990/embed?origin=https%3A%2F%2Fwww.example.com",
     );
   });
 
   it("drops a trailing slash from the link", () => {
-    expect(signPageFrameUrl(new URL("https://sign.page/EA0990/"), page)).toMatch(
-      /^https:\/\/sign\.page\/EA0990\/embed\?/,
+    expect(signPageFrameUrl(new URL("https://sign.page/EA0990/"), page)).toBe(
+      "https://sign.page/EA0990/embed?origin=https%3A%2F%2Fwww.example.com",
     );
   });
 
@@ -100,14 +99,9 @@ describe("signPageFrameUrl", () => {
     );
   });
 
-  it("keeps the segment as the link encodes it, and encodes the page's path", () => {
-    const url = signPageFrameUrl(new URL("https://sign.page/a%20b"), {
-      origin: "http://localhost:3000",
-      pathname: "/a b/&?",
-    });
-    expect(url).toBe(
-      "https://sign.page/a%20b/embed?origin=http%3A%2F%2Flocalhost%3A3000" +
-        "&return_url=http%3A%2F%2Flocalhost%3A3000%2Fa%20b%2F%26%3F",
+  it("keeps the segment as the link encodes it, and encodes the origin", () => {
+    expect(signPageFrameUrl(new URL("https://sign.page/a%20b"), "http://localhost:3000")).toBe(
+      "https://sign.page/a%20b/embed?origin=http%3A%2F%2Flocalhost%3A3000",
     );
   });
 });

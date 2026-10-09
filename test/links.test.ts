@@ -1,13 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { enhanceLinks } from "../src/v1/links.js";
+import { allowedHosts, enhanceLinks } from "../src/v1/links.js";
 import { frameOf, hosts, rootOf, stubFrameWindow } from "./helpers.js";
 
-enhanceLinks(document);
+// The script tag a site's author writes, listing their custom sign domain and
+// a local development host.
+const script = document.createElement("script");
+script.setAttribute("data-connie-hosts", "SIGN.customer.com, sign.connie.localhost:4000");
+enhanceLinks(document, allowedHosts(script));
 
 const PAGE = "https://app.example.com";
 const frameUrl = (pin: string, host = "https://sign.page") =>
-  `${host}/${pin}/embed?origin=${encodeURIComponent(PAGE)}` +
-  `&return_url=${encodeURIComponent(PAGE + "/")}`;
+  `${host}/${pin}/embed?origin=${encodeURIComponent(PAGE)}`;
 
 /**
  * Whether connie-js prevented the last click, read after it, at the window,
@@ -55,7 +58,29 @@ describe("data-connie-signpage links", () => {
     expect(embedIdOf(frame)).toBeTruthy();
   });
 
-  it("keep a custom domain and accept a trailing slash", () => {
+  it("send the page's origin and nothing else of its location", () => {
+    history.replaceState(null, "", "/members/join?token=secret#section-2");
+    try {
+      expect(location.href).toBe(PAGE + "/members/join?token=secret#section-2");
+      click(link("https://sign.page/EA0990"));
+      const src = frameOf(hosts()[0]).src;
+      expect(src).toBe(`${frameUrl("EA0990")}&embed_id=${embedIdOf(frameOf(hosts()[0]))}`);
+      for (const part of ["members", "join", "token", "secret", "section-2", "return_url"]) {
+        expect(src).not.toContain(part);
+      }
+    } finally {
+      history.replaceState(null, "", "/");
+    }
+  });
+
+  it("frame the allowed host, with the camera allowed", () => {
+    click(link("https://sign.page/EA0990"));
+    const frame = frameOf(hosts()[0]);
+    expect(new URL(frame.src).host).toBe("sign.page");
+    expect(frame.getAttribute("allow")).toBe("camera");
+  });
+
+  it("keep a custom domain listed in data-connie-hosts and accept a trailing slash", () => {
     click(link("https://sign.customer.com/EA0990/"));
     expect(
       frameOf(hosts()[0]).src.startsWith(frameUrl("EA0990", "https://sign.customer.com")),
@@ -94,7 +119,7 @@ describe("data-connie-signpage links", () => {
     expect(hosts()).toHaveLength(1);
   });
 
-  it("accept http on a loopback host for development", () => {
+  it("accept http on a loopback host listed with its port", () => {
     click(link("http://sign.connie.localhost:4000/EA0990"));
     expect(new URL(frameOf(hosts()[0]).src).origin).toBe("http://sign.connie.localhost:4000");
   });
@@ -118,10 +143,24 @@ describe("data-connie-signpage links", () => {
     ["no path", "https://sign.page/", {}],
     ["plain http on a public host", "http://sign.page/EA0990", {}],
     ["javascript:", "javascript:void(0)", {}],
+    ["a host not allowed", "https://evil.example/EA0990", {}],
+    ["a sign.page lookalike", "https://sign.page.evil.example/EA0990", {}],
+    ["a subdomain of an allowed host", "https://x.sign.page/EA0990", {}],
+    ["an allowed host on another port", "https://sign.customer.com:8443/EA0990", {}],
+    ["a listed loopback host on another port", "http://sign.connie.localhost:4001/EA0990", {}],
+    ["an unlisted loopback host", "http://localhost:4000/EA0990", {}],
   ])("open normally with %s", (_name, href, attrs) => {
     click(link(href, attrs));
     expect(prevented).toBe(false);
     expect(hosts()).toHaveLength(0);
+  });
+
+  it("never create a frame for a host that is not allowed, so nothing there gets the camera or a navigate", () => {
+    const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+    click(link("https://evil.example/EA0990"));
+    expect(hosts()).toHaveLength(0);
+    expect(document.querySelectorAll("iframe")).toHaveLength(0);
+    expect(assign).not.toHaveBeenCalled();
   });
 
   it("are enhanced with target=_self", () => {
@@ -164,5 +203,27 @@ describe("data-connie-signpage links", () => {
     );
     expect(hosts()).toHaveLength(0);
     expect(assign).toHaveBeenCalledWith("https://sign.page/EA0990");
+  });
+});
+
+describe("allowedHosts", () => {
+  const tag = (value?: string) => {
+    const el = document.createElement("script");
+    if (value !== undefined) el.setAttribute("data-connie-hosts", value);
+    return el;
+  };
+
+  it("is sign.page alone without a script tag or attribute", () => {
+    expect([...allowedHosts(null)]).toEqual(["sign.page"]);
+    expect([...allowedHosts(tag())]).toEqual(["sign.page"]);
+  });
+
+  it("adds the listed hosts, space- or comma-separated, lowercased, ports kept", () => {
+    expect([...allowedHosts(tag(" Sign.Customer.com,sign.other.dk  localhost:4002 "))]).toEqual([
+      "sign.page",
+      "sign.customer.com",
+      "sign.other.dk",
+      "localhost:4002",
+    ]);
   });
 });

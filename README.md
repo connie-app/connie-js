@@ -115,17 +115,23 @@ does, you need no API key, no backend and no npm. Paste two lines:
   **Embed on your website**, then enter your website's address. Connie shows the
   SignPage only on the websites listed there, and removing one stops it at once.
   The snippet shown there carries your SignPage's own link.
+- **Only Connie's sign hosts.** A link opens in the modal only when it points
+  at `https://sign.page/<PIN>`. If your account signs on its own domain, list
+  that host on the script tag:
+  `<script src="https://assets.getconnie.com/js/v1.js" data-connie-hosts="sign.customer.com" defer></script>`
+  (several hosts separated by spaces or commas, a port where there is one).
+  Any other link is an ordinary link.
 - **Without JavaScript it is an ordinary link** to the SignPage. With connie-js,
   a click opens the same modal as `openSignPage`. A click with Ctrl, Cmd, Shift
   or Alt, a middle click, and a link with `target="_blank"` open the link as
   usual. Links added to the page later work too.
 - **eID** leaves your page at the submit step, as below, and "Back to" on the
-  signed page returns to the page the link was on.
+  signed page returns to your website's home page.
 - **If the SignPage can't be shown** (your website is not on its list, or the
   SignPage is not accepting signatures), the visitor goes to the SignPage's own
   page instead.
-- **What Connie learns.** The frame's URL carries your page's origin and path,
-  so "Back to" can return to it. Never its query or fragment.
+- **What Connie learns.** The frame's URL carries your page's origin only:
+  never its path, query or fragment.
 - No metadata, prefill or locks: those need an embed session, below.
 
 ## Quick start
@@ -406,9 +412,15 @@ What connie-js trusts, and what it does not:
   handoff, a `navigate` to `/openid/authorize/…` on its own origin.
 - **The frame** is sent your page's origin as its referrer, never its path or
   query (`referrerpolicy="strict-origin"`), so a token in your page's URL does
-  not reach Connie. A `data-connie-signpage` link also puts your page's origin
-  and path in the frame's URL, for "Back to" after an eID; never its query or
-  fragment.
+  not reach Connie. A `data-connie-signpage` link puts your page's origin in
+  the frame's URL too, and nothing else of its address.
+- **Links are framed only on Connie's sign hosts:** `sign.page`, and the hosts
+  your own script tag lists in `data-connie-hosts`. Trust is never taken from
+  a link, so markup someone else can write on your page (a comment, a
+  profile) cannot have connie-js frame another site, hand it the camera
+  (`allow="camera"`), or let it ask for a `navigate`. `openSignPage({url})` is
+  not limited this way, because its URL comes from your own backend (see
+  above).
 - **`window.Connie`.** The hosted script defines it read-only. An element with
   `id="Connie"` on your page is never mistaken for it, by the script or by
   `loadConnie()`.
