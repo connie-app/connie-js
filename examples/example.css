@@ -35,12 +35,115 @@ button {
   color: #64748b;
 }
 
+/*
+ * The mock SignPage has the real one's layout, which the skeleton copies
+ * (src/v1/styles.ts), so the swap on ready does not move anything.
+ *
+ * Its first 56px are a fixed, non-scrolling header band (white, 1px #e5e5e5
+ * bottom border inside the 56px) with the title on the left and 16px side
+ * padding. It never draws a close button, and when connie-js frames it
+ * (embed_id is set) it leaves the band's right 56px empty for connie-js's.
+ *
+ * Below the band, a #e2e8f0 canvas scrolls with a stable scrollbar gutter. It
+ * holds a column at most 896px wide: 48px above the title and 24px either side
+ * (32px and 16px in a frame narrower than 640px), the title on a 32px line and
+ * the subtitle on a 28px line 8px below it, both centred, then 48px (32px
+ * narrow) down to the paper, which is square, white, shadowed and padded 96px
+ * top and 48px either side. The frame is this page's viewport, so the 640px
+ * breakpoint is a media query here where the skeleton needs a container query.
+ */
 .mock {
-  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  background: #e2e8f0;
 }
 
-.mock header {
+.mock .band {
+  flex: none;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  height: 56px;
+  padding: 0 16px;
+  box-sizing: border-box;
+  border-bottom: 1px solid #e5e5e5;
+  background: #ffffff;
+}
+
+.mock.framed .band {
+  padding-right: 72px;
+}
+
+.mock .band h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mock .document {
+  flex: 1;
+  max-width: none;
+  margin: 0;
+  padding: 48px 24px;
+  box-sizing: border-box;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  background: #e2e8f0;
+}
+
+.mock .document > h2,
+.mock .document > .subtitle,
+.mock .paper {
+  max-width: 848px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.mock .document > h2 {
+  margin-top: 0;
+  margin-bottom: 0;
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.mock .document > .subtitle {
+  margin-top: 8px;
+  margin-bottom: 0;
+  font-size: 18px;
+  line-height: 28px;
+  color: #475569;
+  text-align: center;
+}
+
+.mock .paper {
+  margin-top: 48px;
+  padding: 96px 48px;
+  box-sizing: border-box;
+  border-radius: 0;
+  background: #ffffff;
+  box-shadow:
+    0 12px 16px -4px rgba(10, 13, 18, 0.08),
+    0 4px 6px -2px rgba(10, 13, 18, 0.03),
+    0 2px 2px -1px rgba(10, 13, 18, 0.04),
+    0 9px 7px rgba(0, 0, 0, 0.1);
+}
+
+.mock .paper > p:first-child {
+  margin-top: 0;
+}
+
+@media (max-width: 639.98px) {
+  .mock .document {
+    padding: 32px 16px;
+  }
+
+  .mock .paper {
+    margin-top: 32px;
+  }
 }

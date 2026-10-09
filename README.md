@@ -8,7 +8,8 @@ published SignPages as a modal inside your own web app, with one function call.
 <!-- TODO: add docs/demo.gif (opening a SignPage, signing, the modal closing) and embed it here. -->
 
 - **A SignPage in a modal**, in any web app and any framework. Accessible,
-  full screen on phones, and styled without touching your CSP's `style-src`.
+  full screen on phones, sealed off from your page's CSS in a Shadow DOM, and
+  styled without touching your CSP's `style-src`.
 - **Your data on the contract.** Attach metadata (your user id, an order id) when
   you open it, and get it back on the contract and in the `contract.signed`
   webhook.
@@ -28,6 +29,72 @@ published SignPages as a modal inside your own web app, with one function call.
    is ready, signed or closed.
 3. Connie sends the `contract.signed` **webhook**, with your metadata. That
    webhook is the record of what was signed.
+
+## How it fits together
+
+The modal is connie-js's and the page inside it is the SignPage's. They split
+the work like this, and talk only through `postMessage`.
+
+**The overlay** lives in a closed Shadow DOM on a single `<div>` that connie-js
+appends to `document.body`. Your page's stylesheets cannot reach inside it, and
+the host element itself is styled inline with `all: initial` and `!important`,
+so rules like `* { all: unset }`, `div { … !important }` or `iframe { display:
+none !important }` leave it alone. Inside, a native `<dialog>` opened with
+`showModal()` holds the SignPage's `<iframe>`, a skeleton of the SignPage while
+it loads, and the close button.
+
+**The top layer.** `showModal()` puts the dialog in the browser's top layer,
+above everything on your page whatever its `z-index`, so a cookie banner at
+`2147483647` cannot cover it. The top layer is sized by the viewport, so a
+`transform`, `filter`, `perspective`, `contain` or `will-change` on `html`,
+`body` or any other ancestor does not move or resize it, and the rest of your
+page is inert while it is open. Because the dialog is inside the shadow root,
+rules like `dialog { display: none !important }`, `[open]`, `:modal` or
+`dialog::backdrop` on your page do not match it; connie-js draws its own
+backdrop. A `zoom` on `html` or `body` is undone on the host, so the modal keeps
+its size. In a browser without `showModal()` the host itself is the fixed,
+full-viewport overlay instead.
+
+**The header band.** The SignPage's first 56px are its header band: a fixed,
+non-scrolling row with the title on the left and 16px of side padding, white,
+with a 1px bottom border inside the 56px. When connie-js frames it (the URL
+carries `embed_id`), the band's right 56px stay empty. The SignPage never draws
+a close button of its own.
+
+**The close button** is connie-js's, and the only one, from the moment the
+modal opens until it is gone: a 40×40 button 8px from the dialog's top and
+right edges, so it sits centred in the empty end of the header band, with a
+20px X. It never moves when the SignPage loads. Clicking it closes the modal
+exactly as `embed.close()` does.
+
+**Loading.** Until the SignPage says it is `ready`, a skeleton of it covers the
+frame, laid out as the SignPage is so nothing moves when it appears: the header
+band with a placeholder title, then on the canvas the SignPage's title and
+subtitle, and the document's paper with placeholder lines. The paper sits where
+the SignPage's own does, by the frame's width rather than the page's: 24px from
+the sides below a 48px top margin, or 16px and 32px when the frame is narrower
+than 640px. On `ready` the frame fades in under the skeleton as the
+skeleton fades out, over 200ms, or at once when the signer prefers reduced
+motion. The dialog is `aria-busy` until then.
+
+**Esc.** connie-js closes the modal on Esc while focus is on your page or its
+close button. While focus is inside the SignPage, the SignPage handles Esc: it
+closes its own popovers first, and otherwise asks connie-js to close. Any other
+close request the browser sends the dialog, such as Android's back gesture,
+closes it the same way, and `onClose` fires once.
+
+**Messages.** The SignPage posts
+`{ source: "connie-js", v: 1, embedId, type, payload }` to your page's origin.
+connie-js accepts a message only from the frame's origin, from the frame's own
+window, and with that embed's `embedId`:
+
+| `type`     | `payload`           | connie-js                                                   |
+| ---------- | ------------------- | ----------------------------------------------------------- |
+| `ready`    | `{ title }`         | Labels the dialog with `title`, shows the frame, `onReady`. |
+| `signed`   |                     | `onSigned`. The modal stays open.                           |
+| `close`    |                     | Closes the modal, `onClose`.                                |
+| `error`    | `{ code, message }` | Closes the modal, `onError`, then `onClose`.                |
+| `navigate` | `{ url }`           | Moves your page to `url`, if it is on the frame's origin.   |
 
 ## Quick start
 
@@ -262,9 +329,10 @@ of `sign.page`. The Embed tab of each SignPage in Connie shows the exact lines
 for your account.
 
 - **No `style-src` change.** connie-js needs nothing from your `style-src`:
-  it sets its styles through the CSSOM (a constructed stylesheet and
-  `element.style`), which CSP does not restrict, so neither `'unsafe-inline'`
-  nor a hash is needed.
+  it sets its styles through the CSSOM (a constructed stylesheet adopted into
+  its shadow root, and `element.style`), which CSP does not restrict, so
+  neither `'unsafe-inline'` nor a hash is needed. The top layer is reached
+  through `showModal()`, a DOM call, not markup.
 - **No `connect-src` or `img-src` change.** Everything the SignPage loads is
   governed by Connie's CSP, not yours.
 - **Nonces and `'strict-dynamic'`.** If your policy uses `'strict-dynamic'`,
@@ -305,16 +373,22 @@ link instead. Use connie-js for SignPages that offer an eID.
 
 ## Accessibility and mobile
 
-The modal follows the WAI-ARIA dialog pattern: it is a labelled
-`role="dialog"` with `aria-modal="true"`, focus moves into it when it opens and
+The modal follows the WAI-ARIA dialog pattern: it is a labelled native modal
+`<dialog>`, which assistive technology reads as one modal dialog, with
+the rest of the page inert behind it (`role="dialog"` with `aria-modal="true"`
+in a browser without `showModal()`). Focus moves into it when it opens and
 stays there, Esc closes it, and focus returns to where it was when it closes.
-The page behind it does not scroll. Below 640px wide it fills the screen.
+The page behind it does not scroll. Below 640px wide it fills the screen, and
+keeps clear of notches and home indicators (`env(safe-area-inset-*)`, when your
+page sets `viewport-fit=cover`). Its height follows the dynamic viewport
+(`100dvh`), so mobile browser bars never cover its bottom.
 
 ## Browser support
 
 The latest two versions of Chrome, Edge, Firefox and Safari (macOS and iOS),
 including with third-party cookies blocked: the embedded SignPage uses no
-cookies. The hosted script is under 10 kB gzipped, the npm loader under 1 kB.
+cookies. Safari 16.0 to 16.3, which cannot adopt a constructed stylesheet, gets
+the same modal styled inline, full screen at every width. The hosted script is under 10 kB gzipped, the npm loader under 1 kB.
 
 ## Documentation
 
@@ -331,7 +405,11 @@ npm run example   # serves examples/ at http://localhost:5173/examples/
 ```
 
 The example page runs under a strict CSP and comes with a mock SignPage on a
-second origin, so you can try every event without a Connie account.
+second origin, so you can try every event without a Connie account. Open
+`?hostile` to load an aggressive host stylesheet first, with a cookie banner at
+the highest `z-index` and a transformed, filtered, contained page zoomed 2.25×
+(`?hostile=zoom-out` zooms it 0.8× and `?hostile=no-zoom` not at all), and add
+`?ready_after=<ms>` to change how long the mock holds back `ready`.
 
 ## License
 

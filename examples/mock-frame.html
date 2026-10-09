@@ -8,21 +8,32 @@
     <script src="mock-frame.js" defer></script>
   </head>
   <body class="mock">
-    <header>
+    <header class="band">
       <h1>Mock SignPage</h1>
-      <button id="close" type="button" aria-label="Close">&times;</button>
     </header>
-    <p>
-      Stands in for a SignPage at <code>/embed/:client_secret</code>, posting the messages the real
-      one posts. Esc is forwarded as <code>close</code>.
-    </p>
-    <p>embed_id: <code id="embed-id"></code></p>
-    <div class="buttons">
-      <button id="signed" type="button">Sign</button>
-      <button id="expired" type="button">Error: expired</button>
-      <button id="no-credits" type="button">Error: no_credits</button>
-      <button id="navigate" type="button">Submit with eID (navigate)</button>
-      <button id="navigate-evil" type="button">Navigate off-origin (ignored)</button>
-    </div>
+    <main class="document">
+      <h2>Mock SignPage</h2>
+      <p class="subtitle">Example Company</p>
+      <div class="paper">
+        <p>
+          Stands in for a SignPage at <code>/embed/:client_secret</code>, posting the messages the
+          real one posts. Esc is forwarded as <code>close</code>. It never draws a close button:
+          framed by connie-js, connie-js's sits in the empty right end of the header band above.
+        </p>
+        <p>embed_id: <code id="embed-id"></code></p>
+        <p>
+          Add <code>?ready_after=2000</code> to the session URL to hold <code>ready</code> back and
+          look at the skeleton. The page has the real SignPage's layout, which the skeleton copies,
+          so nothing moves when it fades in.
+        </p>
+        <div class="buttons">
+          <button id="signed" type="button">Sign</button>
+          <button id="expired" type="button">Error: expired</button>
+          <button id="no-credits" type="button">Error: no_credits</button>
+          <button id="navigate" type="button">Submit with eID (navigate)</button>
+          <button id="navigate-evil" type="button">Navigate off-origin (ignored)</button>
+        </div>
+      </div>
+    </main>
   </body>
 </html>
