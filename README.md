@@ -325,13 +325,14 @@ yet, start it from what your `default-src` allows, so nothing that loads today
 stops loading.
 
 ```
-script-src https://assets.getconnie.com;
+script-src https://assets.getconnie.com/js/v1.js;
 frame-src  https://sign.page;
 ```
 
-If your account signs on a custom domain, use that domain in `frame-src` instead
-of `sign.page`. The Embed tab of each SignPage in Connie shows the exact lines
-for your account.
+`script-src` names the exact script rather than the whole host, because the
+same host also serves files uploaded to Connie. If your account signs on a
+custom domain, use that domain in `frame-src` instead of `sign.page`; the
+origin of the session `url` the Connie API returns is exactly your sign host.
 
 - **No `style-src` change.** connie-js needs nothing from your `style-src`:
   it sets its styles through the CSSOM (a constructed stylesheet adopted into
